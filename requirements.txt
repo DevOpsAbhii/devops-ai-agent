@@ -1,0 +1,5 @@
+# Phase 1 — keep this list minimal.
+# OpenRouter exposes an OpenAI-compatible API, so the official OpenAI SDK
+# is the only client library we need.
+openai>=1.40.0
+python-dotenv>=1.0.1
