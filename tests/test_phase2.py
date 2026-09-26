@@ -114,6 +114,23 @@ class ToolContractTests(unittest.TestCase):
                 # Ansible listing (Phase 8)
                 "ansible_inventory",
                 "ansible_playbook_tasks",
+                # New Relic (Phase 9)
+                "newrelic_nrql",
+                "newrelic_alerts",
+                # Security scanning (Phase 9)
+                "trivy_image_scan",
+                # Helm (Phase 9)
+                "helm_list",
+                "helm_status",
+                "helm_history",
+                # Argo CD (Phase 9)
+                "argocd_apps",
+                "argocd_app_status",
+                # Istio mesh (Phase 9)
+                "istioctl_proxy_status",
+                # Docker Compose (Phase 9)
+                "docker_compose_ls",
+                "docker_compose_ps",
             },
         )
 

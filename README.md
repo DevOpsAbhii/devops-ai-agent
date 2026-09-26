@@ -22,7 +22,11 @@ usage, HPAs, PVCs, contexts), Docker depth (networks, volumes, disk usage),
 GitHub Actions via `gh` (runs, run jobs, workflows), cloud identity
 (AWS/GCP/Azure), monitoring/logging (Prometheus, Loki, Grafana — endpoints
 from environment config), and Ansible listing (inventory, playbook tasks).
-The repository is git-tracked.
+**Phase 9 adds 11 trending-market tools (58 total):** New Relic (NRQL +
+open alerts over NerdGraph — credentials from env), Trivy image
+vulnerability scanning, Helm releases (list/status/history), Argo CD
+(GitOps app sync/health), Istio mesh proxy status, and Docker Compose
+(project and service listing). The repository is git-tracked.
 Every phase still built from scratch — no LangChain, LangGraph,
 AutoGen, CrewAI, or MCP.
 
@@ -37,10 +41,11 @@ for it.
 
 In Phase 5 the agent:
 - holds a conversation with **GLM 5.3** through **OpenRouter**;
-- has **47 real, read-only tools** across ten domains: host facts,
-  Kubernetes (12 tools), Linux system (4), Docker (8), Terraform (3),
+- has **58 real, read-only tools** across fifteen domains: host facts,
+  Kubernetes (12 tools), Linux system (4), Docker + Compose (10),
+  Terraform (3), Helm (3), Argo CD (2), Istio (1), security/Trivy (1),
   git/GitHub + Actions (7), cloud identity (4), monitoring/logging (3),
-  Ansible (2), plus the 3 investigation tools;
+  New Relic (2), Ansible (2), plus the 3 investigation tools;
 - runs a **tool-use loop**: when the model decides a question needs evidence,
   it requests the tool, the application executes it locally, and the real
   output is fed back to the model, which then answers from it;
@@ -104,8 +109,13 @@ Module map:
 | `tools/preflight.py`        | `system_info` — host facts (allowlisted read-only commands)  |
 | `tools/kubernetes.py`       | 12 kubectl tools: pods, pod status/logs, deployments, events, nodes, top (cpu/mem), hpa, pvc, services, contexts |
 | `tools/system.py`           | systemd/journal/ss/ps tools — services, journals, ports, top processes |
-| `tools/docker.py`           | read-only docker tools — ps, inspect, logs, stats, images, networks, volumes, disk usage |
+| `tools/docker.py`           | read-only docker tools — ps, inspect, logs, stats, images, networks, volumes, disk usage, compose ls/ps |
 | `tools/terraform.py`        | `tf_show` / `tf_state_list` / `tf_plan` (working directory)  |
+| `tools/helm.py`             | `helm_list` / `helm_status` / `helm_history` — release reads only (Phase 9) |
+| `tools/argocd.py`           | `argocd_apps` / `argocd_app_status` — GitOps app reads (Phase 9) |
+| `tools/istio.py`            | `istioctl_proxy_status` — mesh sync view, no arguments (Phase 9) |
+| `tools/trivy.py`            | `trivy_image_scan` — vulnerability report for one image (Phase 9) |
+| `tools/newrelic.py`         | `newrelic_nrql` / `newrelic_alerts` — NerdGraph over curl, credentials from env only (Phase 9) |
 | `tools/git_ci.py`           | git status/log/diff + `gh_prs`, `gh_runs`, `gh_run_view`, `gh_workflows` (working directory) |
 | `tools/cloud.py`            | read-only cloud identity/listing: `aws_identity`, `gcloud_identity`, `az_account`, `az_groups` |
 | `tools/monitoring.py`       | `prom_query`, `loki_query`, `grafana_health` — endpoints from env config only |
@@ -118,6 +128,7 @@ Module map:
 | `tests/test_automation.py`  | Offline suite: JSON reports + one-shot CLI (Phase 6)                        |
 | `tests/test_phase7.py`      | Offline suite: round-trip serialization, store files, auto-save, resume, CLI flags (Phase 7) |
 | `tests/test_phase8.py`      | Offline suite: argv templates + validation for the 21 Phase 8 tools (fake CLIs, env-based monitoring) |
+| `tests/test_phase9.py`      | Offline suite: New Relic env-credential + payload tests, trivy/helm/argocd/istio/compose argv templates (Phase 9) |
 
 ### The tool-use loop
 
@@ -183,7 +194,7 @@ You: /report
 Agent: # Investigation report  … (canonical, rendered from the record)
 ```
 
-### The tools (Phases 5 and 8)
+### The tools (Phases 5, 8 and 9)
 
 Every tool runs a fixed, allowlisted command — the model only picks
 arguments (names, counts, namespaces), never command text.
@@ -215,6 +226,17 @@ arguments (names, counts, namespaces), never command text.
 |                  | `docker_networks`     | `docker network ls`                                  |
 |                  | `docker_volumes`      | `docker volume ls`                                   |
 |                  | `docker_disk_usage`   | `docker system df`                                   |
+|                  | `docker_compose_ls`   | `docker compose ls`                                  |
+|                  | `docker_compose_ps`   | `docker compose [-p <project>] ps -a`                |
+| Helm            | `helm_list`           | `helm list -n <ns>` / `helm list --all-namespaces`   |
+|                  | `helm_status`         | `helm status <release> -n <ns>`                      |
+|                  | `helm_history`        | `helm history <release> -n <ns> --max <n>`           |
+| Argo CD         | `argocd_apps`         | `argocd app list --output json`                      |
+|                  | `argocd_app_status`   | `argocd app get <app>`                               |
+| Istio           | `istioctl_proxy_status` | `istioctl proxy-status` (no arguments)             |
+| Security        | `trivy_image_scan`    | `trivy image --scanners vuln --format table <image>` |
+| New Relic       | `newrelic_nrql`       | `curl -H "API-Key: …" -d <json payload> https://api.newrelic.com/graphql` |
+|                  | `newrelic_alerts`     | same pinned curl + payload (no model input)          |
 | Terraform        | `tf_show`             | `terraform show -no-color`                           |
 |                  | `tf_state_list`       | `terraform state list`                               |
 |                  | `tf_plan`             | `terraform plan -no-color -input=false`              |
@@ -265,8 +287,19 @@ Notes:
 - Cloud tools are identity/account level only and take no arguments at all;
   Ansible tools are listing modes only (`--list`, `--list-tasks`) with
   relative-path validation (no `/`, no leading `-`, no `..`).
+- **Helm tools only read** (list/status/history — never install/upgrade/
+  rollback/uninstall); **Argo CD tools only list/get** (never sync/rollback/
+  delete); `istioctl_proxy_status` takes no arguments at all;
+  `trivy_image_scan` validates the image reference (no leading `-`, no
+  spaces) and warns its first run may take minutes (CVE DB download).
+- **New Relic credentials are environment-configured, never model-chosen:**
+  `NEW_RELIC_API_KEY` (passed only as a curl header value) and
+  `NEW_RELIC_ACCOUNT_ID` (digits only). The NRQL text travels inside a
+  `json.dumps`-built payload as a GraphQL *variable*, so it can never
+  escape its string slot; only NerdGraph queries are ever sent, never
+  mutations.
 - Log tails (`--tail`, `-n`, `--limit`) are bounded integers, validated
-  1–500 (git log 1–100, gh 1–50, Loki limit 1–1000).
+  1–500 (git log 1–100, gh 1–50, Loki limit 1–1000, helm history 1–50).
 - Any missing CLI / unreachable target returns the exact error — nothing is
   invented (verified live for kubectl, systemctl, journalctl, docker,
   terraform, git).
@@ -282,12 +315,15 @@ Notes:
 - Only read-only verbs exist per domain — `get`/`logs`/`top` and
   `config get-contexts` (kubectl), `status`/`-u`/`ss`/`ps` (system),
   `ps`/`inspect`/`logs`/`stats`/`images`/`network ls`/`volume ls`/
-  `system df` (docker), `show`/`state list`/`plan` (terraform),
-  `status`/`log`/`diff`/`pr list`/`run list`/`run view`/`workflow list`
-  (git/gh), `--list`/`--list-tasks` (ansible), GET-only curl with a pinned
-  argv (monitoring). No delete, restart, edit, apply, scale, exec, run, rm,
-  pull, push, commit, reset, merge, use-context, playbook-run, destroy —
-  by construction.
+  `system df`/`compose ls`/`compose ps` (docker), `show`/`state list`/
+  `plan` (terraform), `list`/`status`/`history` (helm), `app list`/
+  `app get` (argocd), `proxy-status` (istioctl), `image --scanners vuln`
+  (trivy), `status`/`log`/`diff`/`pr list`/`run list`/`run view`/
+  `workflow list` (git/gh), `--list`/`--list-tasks` (ansible), GET-only
+  curl with a pinned argv (monitoring), query-only NerdGraph with a pinned
+  curl (New Relic). No delete, restart, edit, apply, scale, exec, run, rm,
+  pull, push, commit, reset, merge, use-context, playbook-run, install,
+  upgrade, rollback, uninstall, sync, destroy — by construction.
 - Names are validated per domain before reaching any CLI: Kubernetes object
   names (DNS style), systemd unit names (no `/`, no leading `-`), Docker
   names (no `/`), GitHub run ids (digits only), Ansible sources (relative
@@ -351,11 +387,16 @@ Recommended CLIs, by domain:
 | ------------ | ------------------------------------------------ |
 | Kubernetes   | `kubectl` (configured cluster context; metrics-server for `top`) |
 | Linux system | `systemctl`, `journalctl`, `ss`, `ps` (systemd host) |
-| Docker       | `docker` (daemon running)                        |
+| Docker       | `docker` (daemon running); `docker compose` for the compose tools |
 | Terraform    | `terraform` (initialized working directory)      |
+| Helm         | `helm` (kubeconfig)                              |
+| Argo CD      | `argocd` (installed + `argocd login`)            |
+| Istio        | `istioctl` (reachable mesh)                      |
+| Security     | `trivy` (first scan downloads the CVE DB)        |
 | git / GitHub | `git`; `gh` (authenticated, for PRs and Actions) |
 | Cloud        | `aws` / `gcloud` / `az` (only the ones you use)  |
 | Monitoring   | `curl` + endpoint env vars (see below)           |
+| New Relic    | `curl` + `NEW_RELIC_API_KEY` / `NEW_RELIC_ACCOUNT_ID` env vars |
 | Ansible      | `ansible-inventory`, `ansible-playbook`          |
 
 ## 6. Environment setup
@@ -379,6 +420,8 @@ AGENT_STORE_DIR=~/.devops-ai-agent/investigations   # (Phase 7) where records ar
 PROMETHEUS_URL=http://prometheus:9090               # (Phase 8) enables prom_query
 LOKI_URL=http://loki:3100                           # (Phase 8) enables loki_query
 GRAFANA_URL=http://grafana:3000                     # (Phase 8) enables grafana_health
+NEW_RELIC_API_KEY=NRAK-...                          # (Phase 9) NerdGraph user key
+NEW_RELIC_ACCOUNT_ID=1234567                        # (Phase 9) numeric account id
 ```
 
 `.env` is gitignored; the API key is never hard-coded in Python, printed, or
@@ -429,7 +472,7 @@ it never interrupts an investigation.
 Example session:
 
 ```
-DevOps AI Agent (Phase 8 — 47 read-only tools, persistent investigations)
+DevOps AI Agent (Phase 9 — 58 read-only tools, persistent investigations)
 Model:   z-ai/glm-5.3
 Backend: https://openrouter.ai/api/v1
 Store:   /home/you/.devops-ai-agent/investigations
@@ -463,7 +506,7 @@ You: exit
 Type `exit` / `quit`, or press Ctrl-D / Ctrl-C to leave. Slash commands are
 handled locally and never reach the model.
 
-## 8. Current limitations (Phase 8)
+## 8. Current limitations (Phase 9)
 
 - **Each domain needs its CLI installed and reachable.** Missing CLIs,
   unauthenticated `gh`, a dead docker daemon, an uninitialized terraform
@@ -483,6 +526,13 @@ handled locally and never reach the model.
   `gcloud_identity`, `az_account`, `az_groups` answer "which account am I
   looking at" but do not sweep region-scoped resources (ec2 describe-*,
   compute instances list, ...) yet.
+- **Phase 9 tools need their CLIs.** `helm`, `argocd` (plus `argocd
+  login`), `istioctl` and `trivy` are not bundled; without them those
+  tools return the exact "not found" error. New Relic tools need
+  `NEW_RELIC_API_KEY` + `NEW_RELIC_ACCOUNT_ID` in the environment; without
+  them they name the missing variable — nothing is invented.
+- **Trivy's first scan downloads the CVE database** and can take a couple
+  of minutes; subsequent scans are fast.
 - **The model can only select from the registered tools.** It can never run
   an arbitrary verb of any CLI, or a mutating one — by construction.
 - **Raw CLI output to the model.** Python does not re-parse pod/docs/state;
@@ -534,7 +584,15 @@ handled locally and never reach the model.
   (`prom_query`, `loki_query`, `grafana_health` — endpoints from env only),
   and Ansible listing (`ansible_inventory`, `ansible_playbook_tasks`) —
   offline tested, live-verified where the host has the CLI.
+- **Phase 9 — trending-market tools. ✅ Done.** 11 more read-only tools
+  (47 → 58): New Relic (`newrelic_nrql`, `newrelic_alerts` — NerdGraph over
+  curl, credentials env-only, GraphQL variables so query text can't escape),
+  Trivy (`trivy_image_scan`), Helm (`helm_list`, `helm_status`,
+  `helm_history` — reads only), Argo CD (`argocd_apps`,
+  `argocd_app_status`), Istio (`istioctl_proxy_status`), Docker Compose
+  (`docker_compose_ls`, `docker_compose_ps` — live-verified on this host).
 - **Later — region-scoped cloud resources** (ec2 describe-*, compute
-  instances list, ...) behind the same template pattern; streaming;
+  instances list, ...) behind the same template pattern; more observability
+  depth (New Relic dashboards/entities, Prometheus range queries); streaming;
   conversation-history persistence; and a human-approval gate before any
   mutating action is ever allowed.

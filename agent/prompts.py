@@ -42,9 +42,18 @@ USING TOOLS (Phase 5)
     service up/down, why), sys_service_logs (its journal), sys_open_ports,
     sys_top_processes;
   - Docker: docker_ps, docker_inspect, docker_logs, docker_stats,
-    docker_images, docker_networks, docker_volumes, docker_disk_usage;
+    docker_images, docker_networks, docker_volumes, docker_disk_usage,
+    docker_compose_ls, docker_compose_ps (compose projects/services);
   - Terraform: tf_show, tf_state_list, tf_plan (working directory; requires
     `terraform init` already run);
+  - Helm: helm_list, helm_status, helm_history (releases, revisions — needs
+    helm + cluster);
+  - Argo CD (GitOps): argocd_apps (sync/health of all Applications),
+    argocd_app_status (one app's detail — needs argocd login);
+  - Istio mesh: istioctl_proxy_status (Envoy proxies in/out of sync with
+    istiod);
+  - Security: trivy_image_scan (vulnerability report for one image; first
+    run may take minutes while the CVE database downloads);
   - git / GitHub (working directory; gh needs auth and a GitHub remote):
     git_repo_status, git_log, git_diff, gh_prs, and GitHub Actions via gh:
     gh_runs, gh_run_view (one run's jobs/steps), gh_workflows;
@@ -54,6 +63,9 @@ USING TOOLS (Phase 5)
   - Monitoring/logging (only if the operator set the endpoint env vars):
     prom_query (instant PromQL), loki_query (instant LogQL),
     grafana_health;
+  - New Relic (only if NEW_RELIC_API_KEY + NEW_RELIC_ACCOUNT_ID are set):
+    newrelic_nrql (NRQL over APM/infra data), newrelic_alerts (open alert
+    incidents);
   - Ansible (listing only): ansible_inventory (resolved hosts/groups),
     ansible_playbook_tasks (what a playbook WOULD do).
   When a question can be answered with real evidence from an available tool,
@@ -78,12 +90,15 @@ USING TOOLS (Phase 5)
 - Monitoring tools (prom_query, loki_query, grafana_health) only work when
   the operator has set PROMETHEUS_URL / LOKI_URL / GRAFANA_URL. If such a
   tool reports a missing endpoint, tell the user which environment variable
-  to set — never invent a URL or pretend you queried one.
+  to set — never invent a URL or pretend you queried one. The same applies
+  to New Relic (NEW_RELIC_API_KEY + NEW_RELIC_ACCOUNT_ID).
 - Cloud tools (aws_identity, gcloud_identity, az_account, az_groups) need
   the respective CLI installed and authenticated; Ansible tools
   (ansible_inventory, ansible_playbook_tasks) list only — inventory and
-  playbook tasks, never a playbook run. Report missing/misconfigured CLIs
-  exactly as the error says.
+  playbook tasks, never a playbook run. Security, GitOps and mesh tools
+  (trivy_image_scan, helm_list/status/history, argocd_apps/app_status,
+  istioctl_proxy_status) need their CLI installed (trivy, helm, argocd,
+  istioctl) — report missing/misconfigured CLIs exactly as the error says.
 
 INVESTIGATING PROBLEMS (Phase 4)
 

@@ -381,7 +381,7 @@ class RegistryPhase8Tests(Phase8TestCase):
             "ansible_inventory", "ansible_playbook_tasks",
         }
         self.assertLessEqual(expected, names)
-        self.assertEqual(len(names), 47)
+        self.assertEqual(len(names), 58)
 
 
 if __name__ == "__main__":

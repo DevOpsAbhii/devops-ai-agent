@@ -33,15 +33,20 @@ from agent.prompts import SYSTEM_PROMPT
 from agent.store import InvestigationStore
 from tools import (  # noqa: F401 — side effect: each module registers its tools
     ansible,
+    argocd,
     cloud,
     docker,
     git_ci,
+    helm,
     investigation,
+    istio,
     kubernetes,
     monitoring,
+    newrelic,
     preflight,
     system,
     terraform,
+    trivy,
 )
 from tools.investigation import (
     finish_investigation,

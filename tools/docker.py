@@ -1,14 +1,16 @@
-"""Read-only Docker tools (Phases 5 and 8).
+"""Read-only Docker tools (Phases 5, 8, 9).
 
-Eight tools for container problems on the host: list containers (docker ps),
+Ten tools for container problems on the host: list containers (docker ps),
 inspect one (JSON), tail logs, live resource stats (docker stats --no-stream),
-the local image list, and (Phase 8) networks, volumes, and disk usage. Same
-contract/safety model as the other modules.
+the local image list, networks, volumes, disk usage (Phase 8), and (Phase 9)
+Docker Compose project listing + a project's services. Same contract/safety
+model as the other modules.
 
 Safety model:
 - Only fixed argv templates exist with the read-only docker verbs ps, inspect,
-  logs, stats, images, network ls, volume ls, system df. There is no run,
-  start, stop, restart, rm, rmi, pull, push, exec, build, create or prune path.
+  logs, stats, images, network ls, volume ls, system df, compose ls, compose
+  ps. There is no run, start, stop, restart, rm, rmi, pull, push, exec, build,
+  create, prune or compose-up/down path.
 - `docker stats` is hard-coded with `--no-stream`: without it the command
   follows forever and would hang a turn.
 - Container/image names are validated (letters, digits, '.', '-', '_', no
@@ -214,6 +216,58 @@ DOCKER_DISK_USAGE = Tool(
     executor=_docker_disk_usage,
 )
 
+# --- Phase 9: Docker Compose — compose project listing and one project's
+# services. Same contract: fixed argv, validated project name, ps/ls only. ---
+
+def _docker_compose_ls(args: dict) -> str:
+    return read_command_output(("docker", "compose", "ls"), timeout=_TIMEOUT_S)
+
+
+def _docker_compose_ps(args: dict) -> str:
+    project = args.get("project")
+    if project is not None:
+        _check_name(project, "compose project")
+        argv = ("docker", "compose", "-p", project, "ps", "-a")
+    else:
+        # No -p: reads the compose project of the current working directory.
+        argv = ("docker", "compose", "ps", "-a")
+    return read_command_output(argv, timeout=_TIMEOUT_S)
+
+
+DOCKER_COMPOSE_LS = Tool(
+    name="docker_compose_ls",
+    description=(
+        "List running Docker Compose projects on the host (docker compose "
+        "ls): project name, status, config files. Use to see which compose "
+        "stacks exist before looking at one's services. Read-only."
+    ),
+    parameters={"type": "object", "properties": {}, "additionalProperties": False},
+    executor=_docker_compose_ls,
+)
+
+DOCKER_COMPOSE_PS = Tool(
+    name="docker_compose_ps",
+    description=(
+        "List the containers of a Docker Compose project (docker compose "
+        "ps -a): service, state, ports — running AND stopped. Use with "
+        "docker_compose_ls to see what a stack is made of, or which service "
+        "inside a project exited. Without 'project', uses the compose file "
+        "in the current working directory. Read-only."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "project": {
+                "type": "string",
+                "description": "Optional compose project name (from "
+                "docker_compose_ls).",
+            }
+        },
+        "additionalProperties": False,
+    },
+    executor=_docker_compose_ps,
+)
+
 register(DOCKER_PS)
 register(DOCKER_INSPECT)
 register(DOCKER_LOGS)
@@ -222,3 +276,5 @@ register(DOCKER_IMAGES)
 register(DOCKER_NETWORKS)
 register(DOCKER_VOLUMES)
 register(DOCKER_DISK_USAGE)
+register(DOCKER_COMPOSE_LS)
+register(DOCKER_COMPOSE_PS)

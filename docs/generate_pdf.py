@@ -208,8 +208,8 @@ story += [
         ["Project", "devops-ai-agent  (~/devops-ai-agent)"],
         ["Model", "GLM 5.3  (z-ai/glm-5.3) via OpenRouter"],
         ["Language", "Python 3.10+ (stdlib tools + openai SDK + python-dotenv)"],
-        ["Phases complete", "1 – 8  (Phase 8: tool expansion — 47 read-only tools)"],
-        ["Tools", "47 real, read-only tools across 10 domains"],
+        ["Phases complete", "1 – 9  (Phase 9: New Relic + trending DevOps tools — 58 read-only tools)"],
+        ["Tools", "58 real, read-only tools across 15 domains"],
         ["Generated", TODAY],
     ], [4.2 * cm, 12.3 * cm]),
     Spacer(1, 2.2 * cm),
@@ -241,14 +241,16 @@ story += [
       "flows, how tool selection + execution + evidence feedback work — "
       "instead of depending on a framework for it. No LangChain, LangGraph, "
       "AutoGen, CrewAI or MCP anywhere."),
-    H2("What the agent does today (Phases 1–8)"),
+    H2("What the agent does today (Phases 1–9)"),
     *bullets([
         "Holds a conversation with GLM 5.3 through OpenRouter's "
         "OpenAI-compatible endpoint.",
-        "Has 47 real, read-only tools across ten domains: host facts, "
-        "Kubernetes (12), Linux system (4), Docker (8), Terraform (3), "
+        "Has 58 real, read-only tools across fifteen domains: host facts, "
+        "Kubernetes (12), Linux system (4), Docker + Compose (10), "
+        "Terraform (3), Helm (3), Argo CD (2), Istio (1), Trivy (1), "
         "git/GitHub + Actions (7), cloud identity (4), monitoring/logging "
-        "(3), Ansible (2), plus the 3 investigation meta-tools.",
+        "(3), New Relic (2), Ansible (2), plus the 3 investigation "
+        "meta-tools.",
         "Runs a tool-use loop: when the model decides a question needs "
         "evidence, it requests the tool, the application executes it locally, "
         "and the real output is fed back to the model, which then answers "
@@ -297,6 +299,10 @@ story += [
               "disk usage), GitHub Actions (runs/run view/workflows), cloud "
               "identity (AWS/GCP/Azure), monitoring (Prometheus/Loki/Grafana, "
               "env-configured endpoints), Ansible listing.", "Done"],
+        ["9", "Trending-market tools: 11 more read-only tools (47 → 58) — "
+              "New Relic (NRQL + alerts over NerdGraph, env credentials), "
+              "Trivy image scanning, Helm releases, Argo CD GitOps, Istio "
+              "mesh status, Docker Compose.", "Done"],
     ], [1.6 * cm, 11.4 * cm, 1.5 * cm]),
     PageBreak(),
 ]
@@ -355,8 +361,14 @@ GLM 5.3 (z-ai/glm-5.3)
                                 "hpa, pvc, services, contexts"],
         ["tools/system.py", "systemd/journal/ss/ps tools"],
         ["tools/docker.py", "docker ps/inspect/logs/stats/images + "
-                            "networks/volumes/disk usage"],
+                            "networks/volumes/disk usage + compose ls/ps"],
         ["tools/terraform.py", "tf_show / tf_state_list / tf_plan"],
+        ["tools/helm.py", "helm_list / helm_status / helm_history (Phase 9)"],
+        ["tools/argocd.py", "argocd_apps / argocd_app_status (Phase 9)"],
+        ["tools/istio.py", "istioctl_proxy_status (Phase 9)"],
+        ["tools/trivy.py", "trivy_image_scan (Phase 9)"],
+        ["tools/newrelic.py", "newrelic_nrql / newrelic_alerts — NerdGraph "
+                              "over curl, env credentials (Phase 9)"],
         ["tools/git_ci.py", "git status/log/diff + gh_prs + gh Actions "
                             "(runs / run view / workflows)"],
         ["tools/cloud.py", "cloud identity: aws_identity, gcloud_identity, "
@@ -382,6 +394,9 @@ GLM 5.3 (z-ai/glm-5.3)
         ["tests/test_phase8.py", "Offline suite: argv templates + validation "
                                  "for the 21 Phase 8 tools (fake CLIs, "
                                  "env-based monitoring)"],
+        ["tests/test_phase9.py", "Offline suite: New Relic credentials/"
+                                 "payload, trivy/helm/argocd/istio/compose "
+                                 "argv templates (Phase 9)"],
     ], [5.4 * cm, 11.1 * cm], mono_cols=(0,)),
     PageBreak(),
 ]
@@ -1084,9 +1099,84 @@ def test_gh_run_id_must_be_digits(self):
     PageBreak(),
 ]
 
-# ---- 11. safety ------------------------------------------------------------- #
+# ---- 11. phase 9 ------------------------------------------------------------ #
 story += [
-    H1("11. How read-only is enforced (defense in depth)"),
+    H1("11. Phase 9 — New Relic and trending DevOps tools"),
+    P("Phase 9 keeps the additive rhythm: 11 more read-only tools take the "
+      "registry from 47 to 58, aimed at what the current DevOps market runs "
+      "on — observability (New Relic), supply-chain security (Trivy), "
+      "release management (Helm), GitOps (Argo CD), service mesh (Istio) "
+      "and Docker Compose. Host CLI reality is handled the project way: "
+      "compose is installed and live-verified; helm/trivy/argocd/istioctl "
+      "are not installed on the build host, so their tools are stub-tested "
+      "and fail with the exact CLI error until an operator installs them."),
+    H2("The 11 new tools with backing commands"),
+    table(["Domain", "Tool", "Backing command (read-only)"], [
+        ["New Relic", "newrelic_nrql", "curl -H \"API-Key: …\" -d <json payload> "
+                                       "https://api.newrelic.com/graphql"],
+        ["", "newrelic_alerts", "same pinned curl + payload (no model input)"],
+        ["Security", "trivy_image_scan", "trivy image --scanners vuln "
+                                         "--format table <image>"],
+        ["Helm", "helm_list", "helm list -n <ns> | --all-namespaces"],
+        ["", "helm_status", "helm status <release> -n <ns>"],
+        ["", "helm_history", "helm history <release> -n <ns> --max <n>"],
+        ["Argo CD", "argocd_apps", "argocd app list --output json"],
+        ["", "argocd_app_status", "argocd app get <app>"],
+        ["Istio", "istioctl_proxy_status", "istioctl proxy-status (no args)"],
+        ["Compose", "docker_compose_ls", "docker compose ls"],
+        ["", "docker_compose_ps", "docker compose [-p <project>] ps -a"],
+    ], [2.6 * cm, 4.6 * cm, 9.3 * cm], mono_cols=(1, 2)),
+    H2("New Relic — the monitoring pattern, extended to POST"),
+    P("tools/newrelic.py extends tools/monitoring.py's \"endpoint from "
+      "environment config\" rule to a POST API. Credentials NEVER come from "
+      "the model: NEW_RELIC_API_KEY is read from the environment and passed "
+      "only as a curl header value; NEW_RELIC_ACCOUNT_ID must be digits "
+      "(it enters the payload as an integer). The NRQL text travels inside "
+      "a json.dumps-built payload as a GraphQL variable — it can never "
+      "escape its string slot — and only NerdGraph queries are ever sent, "
+      "never mutations:"),
+    *code("tools/newrelic.py"),
+    PageBreak(),
+    H2("Helm, Argo CD, Istio, Trivy — reads only, per domain"),
+    P("Helm gets the kubernetes.py name validator and only the "
+      "list/status/history verbs (no install/upgrade/rollback/uninstall). "
+      "Argo CD gets list/get only (no sync/rollback/delete). Istio is one "
+      "argument-free template. Trivy validates the image reference before "
+      "a scan that can take minutes on first run (CVE DB download):"),
+    *code("tools/helm.py"),
+    PageBreak(),
+    *code("tools/argocd.py"),
+    *code("tools/istio.py"),
+    *code("tools/trivy.py"),
+    H2("Phase 9 tests — credentials, payloads, argv"),
+    P("tests/test_phase9.py proves the New Relic env-credential contract "
+      "(unset → honest error naming the variable; non-digit account id → "
+      "refused), that the alerts payload is byte-identical regardless of "
+      "what the model sends, and the exact argv of every stubbed CLI:"),
+    *code_text("""
+def test_alerts_payload_ignores_model_args(self):
+    # No model input reaches the payload — a no-injection proof.
+    os.environ["NEW_RELIC_API_KEY"] = "nrk-test"
+    os.environ["NEW_RELIC_ACCOUNT_ID"] = "42"
+    result = self.run_tool("newrelic_alerts", '{"evil": "drop tables"}')
+    line = result.splitlines()[0]
+    payload = line[line.index('{"query"'):].rsplit(" https://", 1)[0]
+    data = json.loads(payload)
+    self.assertEqual(data["variables"], {"accountId": 42})
+    self.assertNotIn("evil", result)
+
+def test_invalid_image_refs_rejected(self):
+    for bad in ("-q", "img; rm -rf /", "img extra", "", "x" * 201):
+        result = self.run_tool("trivy_image_scan", f'{{"image": "{bad}"}}')
+        self.assertTrue(result.startswith("Tool error"), (bad, result))
+        self.assertNotIn("ARGS:", result)  # trivy was never invoked
+""", cap="tests/test_phase9.py — env credentials and injection rejection."),
+    PageBreak(),
+]
+
+# ---- 12. safety ------------------------------------------------------------- #
+story += [
+    H1("12. How read-only is enforced (defense in depth)"),
     *bullets([
         "The tool schemas only allow picking names/counts/namespaces from "
         "validated arguments — there is no way to pass command text to any "
@@ -1097,17 +1187,27 @@ story += [
         "into the template and cannot be removed or added.",
         "Only read-only verbs exist per domain — get/logs/top and config "
         "get-contexts (kubectl), status/-u/ss/ps (system), ps/inspect/logs/"
-        "stats/images/network ls/volume ls/system df (docker), show/state "
-        "list/plan (terraform), status/log/diff/pr list/run list/run view/"
+        "stats/images/network ls/volume ls/system df/compose ls/compose ps "
+        "(docker), show/state list/plan (terraform), list/status/history "
+        "(helm), app list/app get (argocd), proxy-status (istioctl), image "
+        "--scanners vuln (trivy), status/log/diff/pr list/run list/run view/"
         "workflow list (git/gh), --list/--list-tasks (ansible), GET-only "
-        "curl with a pinned argv (monitoring). No delete, restart, edit, "
-        "apply, scale, exec, run, rm, pull, push, commit, reset, merge, "
-        "use-context, playbook-run, destroy — by construction.",
+        "curl with a pinned argv (monitoring), query-only NerdGraph with a "
+        "pinned curl (New Relic). No delete, restart, edit, apply, scale, "
+        "exec, run, rm, pull, push, commit, reset, merge, use-context, "
+        "playbook-run, install, upgrade, rollback, uninstall, sync, "
+        "destroy — by construction.",
         "Names are validated per domain before reaching any CLI: Kubernetes "
         "object names (DNS style), systemd unit names (no /, no leading "
         "-), Docker names (no /), GitHub run ids (digits only), Ansible "
-        "sources (relative paths, no ..), and no path parameters at all "
-        "for terraform/git/gh tools. This blocks flag and path injection.",
+        "sources (relative paths, no ..), Helm/Argo CD names (DNS style), "
+        "Trivy image refs (no leading -, no spaces), and no path parameters "
+        "at all for terraform/git/gh tools. This blocks flag and path "
+        "injection.",
+        "New Relic credentials never come from the model: NEW_RELIC_API_KEY "
+        "and NEW_RELIC_ACCOUNT_ID are environment-configured, the key is "
+        "only a curl header value, the account id must be digits, and the "
+        "NRQL text rides inside a json.dumps payload as a GraphQL variable.",
         "The monitoring endpoints never come from the model: they are read "
         "from PROMETHEUS_URL / LOKI_URL / GRAFANA_URL, must be http(s), and "
         "the query text is percent-encoded into the URL before curl runs.",
@@ -1134,7 +1234,7 @@ story += [
 
 # ---- 11. testing ----------------------------------------------------------- #
 story += [
-    H1("12. Testing"),
+    H1("13. Testing"),
     P("Everything is offline: tests make no network calls and need no API "
       "key. Fake clients stand in for the model, and stub CLIs on PATH "
       "prove the exact argv the application builds. Real cluster/container "
@@ -1173,7 +1273,7 @@ python -m unittest discover -s tests -v
 
 # ---- 12. usage ------------------------------------------------------------- #
 story += [
-    H1("13. Installation and usage"),
+    H1("14. Installation and usage"),
     H2("Install"),
     *code_text("""
 cd ~/devops-ai-agent
@@ -1232,7 +1332,7 @@ cp .env.example .env   # then edit: OPENROUTER_API_KEY=sk-or-...
       "act on the verdict instead of parsing markdown."),
     H2("Example session"),
     *code_text("""
-DevOps AI Agent (Phase 8 — 47 read-only tools, persistent investigations)
+DevOps AI Agent (Phase 9 — 58 read-only tools, persistent investigations)
 Model:   z-ai/glm-5.3
 Backend: https://openrouter.ai/api/v1
 Store:   /home/you/.devops-ai-agent/investigations
@@ -1253,7 +1353,7 @@ You: exit
 
 # ---- 13. limitations & roadmap ---------------------------------------------- #
 story += [
-    H1("14. Current limitations"),
+    H1("15. Current limitations"),
     *bullets([
         "Each domain needs its CLI installed and reachable; missing CLIs, "
         "unauthenticated gh, a dead docker daemon, an uninitialized "
@@ -1285,7 +1385,7 @@ story += [
         "will only be added behind an explicit human-approval gate, much "
         "later.",
     ]),
-    H1("15. Roadmap"),
+    H1("16. Roadmap"),
     table(["Phase", "Scope"], [
         ["Phase 8", "Tool expansion (done): 21 more read-only tools (26 → "
                     "47) — k8s depth, Docker depth, GitHub Actions, cloud "

@@ -255,7 +255,7 @@ def main() -> int:
 
     tool_names = ", ".join(sorted(tool.name for tool in agent.tools)) or "none"
 
-    print("DevOps AI Agent (Phase 8 — 47 read-only tools, persistent investigations)")
+    print("DevOps AI Agent (Phase 9 — 58 read-only tools, persistent investigations)")
     print(f"Model:   {agent.model}")
     print(f"Backend: {agent.base_url}")
     print(f"Store:   {agent.store_dir or '(persistence off)'}")
