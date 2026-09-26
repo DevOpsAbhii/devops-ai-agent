@@ -1,5 +1,12 @@
 # DevOps AI Agent
 
+[![PyPI](https://img.shields.io/pypi/v/devopsiq)](https://pypi.org/project/devopsiq/)
+[![Python](https://img.shields.io/pypi/pyversions/devopsiq)](https://pypi.org/project/devopsiq/)
+[![Release](https://github.com/DevOpsAbhii/devops-ai-agent/actions/workflows/release.yml/badge.svg)](https://github.com/DevOpsAbhii/devops-ai-agent/actions/workflows/release.yml)
+[![Docker](https://img.shields.io/badge/ghcr-devops--ai--agent-2496ED?logo=docker&logoColor=white)](https://github.com/DevOpsAbhii/devops-ai-agent/pkgs/container/devops-ai-agent)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-169%20offline-brightgreen)](https://github.com/DevOpsAbhii/devops-ai-agent/actions/workflows/release.yml)
+
 An AI agent that investigates real DevOps problems. The end goal: ask it
 something like *"Why is my Kubernetes pod in CrashLoopBackOff?"* and have it
 gather evidence, reason about the evidence, identify the likely root cause,

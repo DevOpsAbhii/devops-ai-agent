@@ -38,6 +38,7 @@ dependencies = [
 Homepage = "https://github.com/DevOpsAbhii/devops-ai-agent"
 Repository = "https://github.com/DevOpsAbhii/devops-ai-agent"
 Issues = "https://github.com/DevOpsAbhii/devops-ai-agent/issues"
+Changelog = "https://github.com/DevOpsAbhii/devops-ai-agent/blob/main/CHANGELOG.md"
 
 [project.scripts]
 devopsiq = "main:main"
