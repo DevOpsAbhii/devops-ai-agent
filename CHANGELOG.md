@@ -6,7 +6,7 @@ versions follow [SemVer](https://semver.org/). Each version is published
 automatically when its `vX.Y.Z` tag is pushed (see
 `.github/workflows/release.yml`): PyPI + a multi-arch Docker image.
 
-## [Unreleased]
+## [0.1.2] — 2026-09-26
 
 ### Added
 - **Model choice ladder**: the model is now set by precedence — `--model`

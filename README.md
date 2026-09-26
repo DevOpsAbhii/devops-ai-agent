@@ -708,7 +708,7 @@ handled locally and never reach the model.
   still constructs — record commands (`/report`, `/investigations`) and the
   58-tool layer work; only model questions exit 1 with the setup message.
   Verified end-to-end against the published package.
-- **Model choice + resilient calls (post-v0.1.1). ✅ Done.** The model is
+- **Model choice + resilient calls (v0.1.2). ✅ Done.** The model is
   set by a 4-rung ladder — `--model` flag > `/model`-saved config file
   (`~/.devops-ai-agent/config.json`) > `OPENROUTER_MODEL` > baked-in
   default — and transient model-call failures (timeouts, connection

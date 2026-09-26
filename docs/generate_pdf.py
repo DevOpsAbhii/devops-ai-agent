@@ -210,8 +210,9 @@ story += [
         ["Language", "Python 3.10+ (stdlib tools + openai SDK + python-dotenv)"],
         ["Phases complete", "1 – 10  (Phase 10: Distribution — PyPI package + prebuilt Docker image)"],
         ["Tools", "58 real, read-only tools across 15 domains"],
-        ["Latest release", "v0.1.1 — devopsiq on PyPI + GHCR image "
-                           "(multi-arch), model-less mode included"],
+        ["Latest release", "v0.1.2 — devopsiq on PyPI + GHCR image "
+                           "(multi-arch); model-less mode, model-choice "
+                           "ladder, and retry/backoff on transient failures"],
         ["Generated", TODAY],
     ], [4.2 * cm, 12.3 * cm]),
     Spacer(1, 2.2 * cm),
@@ -1291,6 +1292,17 @@ OPENROUTER_API_KEY= devopsiq "why?"       # [input] OPENROUTER_API_KEY is not
 export OPENROUTER_BASE_URL=http://localhost:11434/v1
 export OPENROUTER_MODEL=llama3.2          # any tool-calling Ollama model
 """, cap="Model-less mode and local endpoints."),
+    H2("After Phase 10 — v0.1.2: model choice + resilient calls"),
+    P("The second follow-up release added two things. Model choice: the "
+      "model is set by a 4-rung ladder — the --model flag (one run) > "
+      "~/.devops-ai-agent/config.json, saved by the /model <name> REPL "
+      "command (agent/config.py, tolerant reads) > the OPENROUTER_MODEL "
+      "env var > the built-in default. Retries: transient model-call "
+      "failures (timeouts, connection errors, 429s with Retry-After, "
+      "5xx) retry up to 3 times with exponential backoff 2s -> 4s -> 8s "
+      "plus jitter, inside DevOpsAgent._call_model(); a rejected key "
+      "(401) or any other 4xx fails immediately. Tests: 169 -> 181 "
+      "(ModelChoiceTests, RetryTests)."),
     PageBreak(),
 ]
 
