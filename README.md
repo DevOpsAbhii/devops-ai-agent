@@ -5,7 +5,7 @@
 [![Release](https://github.com/DevOpsAbhii/devops-ai-agent/actions/workflows/release.yml/badge.svg)](https://github.com/DevOpsAbhii/devops-ai-agent/actions/workflows/release.yml)
 [![Docker](https://img.shields.io/badge/ghcr-devops--ai--agent-2496ED?logo=docker&logoColor=white)](https://github.com/DevOpsAbhii/devops-ai-agent/pkgs/container/devops-ai-agent)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-169%20offline-brightgreen)](https://github.com/DevOpsAbhii/devops-ai-agent/actions/workflows/release.yml)
+[![Tests](https://img.shields.io/badge/tests-181%20offline-brightgreen)](https://github.com/DevOpsAbhii/devops-ai-agent/actions/workflows/release.yml)
 
 An AI agent that investigates real DevOps problems. The end goal: ask it
 something like *"Why is my Kubernetes pod in CrashLoopBackOff?"* and have it
@@ -199,6 +199,7 @@ the CLI exposes it directly:
 | `/investigations`        | List saved records on disk (newest first; `← active` marks the live one) |
 | `/report`                | Show the canonical report (once concluded)          |
 | `/endinvestigation`      | Clear the record (memory only — the saved copy stays as history) |
+| `/model [<name>]`        | Show the active model, or save a default (config.json) and switch to it |
 
 The report the agent ends with and `/report` render are kept consistent by
 construction: `tool` results confirm each record call and the tracker, and
@@ -386,16 +387,22 @@ official `openai` Python SDK works as our client with two config lines:
 OpenAI(api_key=..., base_url="https://openrouter.ai/api/v1")
 ```
 
-Swapping to another OpenRouter model later is a one-line change (an env var
-today); moving to any other OpenAI-compatible provider changes only
-`agent/agent.py` configuration.
+Swapping to another OpenRouter model later is a one-liner (env var, `/model`
+command, or `--model` flag); moving to any other OpenAI-compatible provider
+changes only `agent/agent.py` configuration.
 
 **Your model, your choice.** The default is baked in as a fallback, never a
-restriction — set `OPENROUTER_MODEL` (shell or `.env`) to any model on
-OpenRouter:
+restriction. Four ways to set the model — the first one set wins:
+
+1. `--model NAME` flag (one run: `devopsiq --model openai/gpt-5.2 "why?"`)
+2. `/model <name>` in the REPL — saves it to `~/.devops-ai-agent/config.json`
+   so every future run uses it
+3. `OPENROUTER_MODEL` (shell or `.env`)
+4. built-in default (`z-ai/glm-5.3`)
 
 ```bash
 export OPENROUTER_MODEL=anthropic/claude-sonnet-5   # or openai/gpt-5.2, google/gemini-2.5-pro, ...
+devopsiq /model openai/gpt-5.2                      # or save a default from the REPL
 ```
 
 Two things to weigh when picking: the agent is a tool-use loop, so choose a
@@ -548,6 +555,7 @@ setup/API errors — so it drops straight into a pipeline:
 .venv/bin/python main.py --json "why is api-5d6f crash-looping?"   # structured report
 .venv/bin/python main.py --resume --json "any update?"             # continue a prior run
 .venv/bin/python main.py --store-dir /tmp/runs --out report.json "..."  # pipeline paths
+.venv/bin/python main.py --model openai/gpt-5.2 "why is it down?"   # one-run model override
 ```
 
 With `--json` the stdout is one JSON document (see `render_report_json` in
@@ -589,8 +597,8 @@ Tools:   ansible_inventory, ansible_playbook_tasks, aws_identity,
          k8s_top_nodes, k8s_top_pods, loki_query, prom_query,
          sys_open_ports, sys_service_logs, sys_service_status,
          sys_top_processes, system_info, tf_plan, tf_show, tf_state_list
-Commands: /investigate <problem>, /investigation, /investigations, /report, /endinvestigation
-One-shot: python main.py [--json] [--resume] [--out report.json] [--store-dir DIR] "<problem>"
+Commands: /investigate <problem>, /investigation, /investigations, /report, /endinvestigation, /model [<name>]
+One-shot: python main.py [--json] [--resume] [--out report.json] [--store-dir DIR] [--model NAME] "<problem>"
 Type 'exit' to quit.
 
 You: The checkout service container keeps exiting in Docker. Investigate.
@@ -700,9 +708,14 @@ handled locally and never reach the model.
   still constructs — record commands (`/report`, `/investigations`) and the
   58-tool layer work; only model questions exit 1 with the setup message.
   Verified end-to-end against the published package.
+- **Model choice + resilient calls (post-v0.1.1). ✅ Done.** The model is
+  set by a 4-rung ladder — `--model` flag > `/model`-saved config file
+  (`~/.devops-ai-agent/config.json`) > `OPENROUTER_MODEL` > baked-in
+  default — and transient model-call failures (timeouts, connection
+  errors, 429s, 5xx) retry with exponential backoff (2s→4s→8s + jitter,
+  honoring a 429's Retry-After); a rejected key fails immediately.
 - **Later — region-scoped cloud resources** (ec2 describe-*, compute
   instances list, ...) behind the same template pattern; more observability
   depth (New Relic dashboards/entities, Prometheus range queries); streaming;
-  conversation-history persistence; a `--model` flag plus a per-user config
-  file (flag > config > env > baked-in default); and a human-approval gate
+  conversation-history persistence; and a human-approval gate
   before any mutating action is ever allowed.

@@ -26,9 +26,18 @@ exits; the delegates below expose resume/list/store-location to the CLI.
 """
 
 import os
+import random
+import time
 
-from openai import OpenAI
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    OpenAI,
+    RateLimitError,
+)
 
+from agent.config import load_user_config
 from agent.prompts import SYSTEM_PROMPT
 from agent.store import InvestigationStore
 from tools import (  # noqa: F401 — side effect: each module registers its tools
@@ -68,6 +77,50 @@ PLACEHOLDER_KEY = "your_key_here"
 # Safety valve: the model gets at most this many tool-use turns before we stop.
 MAX_TOOL_ITERATIONS = 10
 
+# Transient-failure retries for the model call itself (network blips, 429,
+# 5xx). MAX_MODEL_RETRIES attempts beyond the first, exponential backoff
+# starting at RETRY_BASE_DELAY (2s -> 4s -> 8s) plus jitter, capped at
+# RETRY_MAX_DELAY. A 429's Retry-After header wins when present.
+MAX_MODEL_RETRIES = 3
+RETRY_BASE_DELAY = 2.0
+RETRY_MAX_DELAY = 60.0
+
+_sleep = time.sleep  # test seam: offline tests patch agent.agent._sleep
+
+
+def _is_transient(exc: Exception) -> bool:
+    """True when retrying `exc` can plausibly succeed.
+
+    Timeouts, connection failures, rate limits, and server-side 5xx are
+    transient. A rejected key (401) or any other client 4xx is not — the
+    same request would fail identically forever, so it fails immediately.
+    """
+    if isinstance(exc, (APITimeoutError, APIConnectionError, RateLimitError)):
+        return True
+    if isinstance(exc, APIStatusError):
+        return exc.status_code >= 500
+    return False
+
+
+def _retry_delay(exc: Exception, attempt: int) -> float:
+    """Seconds to wait before retry number `attempt` (0-based).
+
+    Exponential backoff with jitter, except on a rate limit carrying a
+    Retry-After header — the server knows its own budget, so it wins
+    (clamped to [1, RETRY_MAX_DELAY] so a bad header cannot hurt us).
+    """
+    response = getattr(exc, "response", None)
+    retry_after = getattr(response, "headers", {}).get("retry-after")
+    if retry_after:
+        try:
+            return min(max(float(retry_after), 1.0), RETRY_MAX_DELAY)
+        except (TypeError, ValueError):
+            pass  # non-numeric header: fall through to backoff
+    return min(
+        RETRY_BASE_DELAY * (2 ** attempt) + random.uniform(0, 1),
+        RETRY_MAX_DELAY,
+    )
+
 
 class DevOpsAgent:
     """Minimal DevOps investigation assistant (read-only by design)."""
@@ -81,7 +134,12 @@ class DevOpsAgent:
         # Configuration resolution order: explicit argument > environment > default.
         self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
 
-        self.model = model or os.getenv("OPENROUTER_MODEL", DEFAULT_MODEL)
+        self.model = (
+            model                                   # 1. explicit --model flag
+            or load_user_config().get("model")      # 2. ~/.devops-ai-agent/config.json
+            or os.getenv("OPENROUTER_MODEL")        # 3. environment / .env
+            or DEFAULT_MODEL                        # 4. built-in default
+        )
         self.base_url = base_url or os.getenv("OPENROUTER_BASE_URL", DEFAULT_BASE_URL)
 
         # Model-less mode: a missing (or placeholder) key no longer blocks
@@ -197,7 +255,7 @@ class DevOpsAgent:
             if self.tools:
                 request["tools"] = [tool.schema() for tool in self.tools]
 
-            response = self.client.chat.completions.create(**request)
+            response = self._call_model(request)
             message = response.choices[0].message
 
             if not message.tool_calls:
@@ -218,6 +276,23 @@ class DevOpsAgent:
         raise RuntimeError(
             f"The model did not finish after {MAX_TOOL_ITERATIONS} tool-use turns."
         )
+
+    def _call_model(self, request: dict):
+        """One model call with bounded retries on transient failures.
+
+        Timeouts, connection errors, rate limits (429) and server-side 5xx
+        are retried up to MAX_MODEL_RETRIES times with exponential backoff
+        (2s, 4s, 8s + jitter); a 429's Retry-After header wins when present.
+        Client errors — a rejected key (401) most notably — fail immediately,
+        because retrying the identical request cannot fix them.
+        """
+        for attempt in range(MAX_MODEL_RETRIES + 1):
+            try:
+                return self.client.chat.completions.create(**request)
+            except Exception as exc:  # noqa: BLE001 — classified right below
+                if attempt >= MAX_MODEL_RETRIES or not _is_transient(exc):
+                    raise
+                _sleep(_retry_delay(exc, attempt))
 
 
 def _echo_tool_request(message) -> dict:

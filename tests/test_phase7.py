@@ -329,11 +329,11 @@ class CliTests(unittest.TestCase):
 
     def test_parse_args_defaults(self):
         self.assertEqual(
-            main_module.parse_args([]), (None, False, None, False, None)
+            main_module.parse_args([]), (None, False, None, False, None, None)
         )
         self.assertEqual(
             main_module.parse_args(["why is it down?"]),
-            ("why is it down?", False, None, False, None),
+            ("why is it down?", False, None, False, None, None),
         )
 
     def test_parse_args_all_flags(self):
@@ -341,18 +341,19 @@ class CliTests(unittest.TestCase):
             ["--json", "--resume", "--store-dir", "/tmp/s", "--out", "r.json",
              "why", "is it down?"]
         )
-        self.assertEqual(args, ("why is it down?", True, "/tmp/s", True, "r.json"))
+        self.assertEqual(
+            args, ("why is it down?", True, "/tmp/s", True, "r.json", None))
 
     def test_parse_args_flags_only_runs_repl(self):
         self.assertEqual(
             main_module.parse_args(["--json", "--resume"]),
-            (None, True, None, True, None),
+            (None, True, None, True, None, None),
         )
 
     def test_parse_args_flag_without_value_is_ignored(self):
         self.assertEqual(
             main_module.parse_args(["--store-dir"]),
-            (None, False, None, False, None),
+            (None, False, None, False, None, None),
         )
 
     # --- --store-dir ----------------------------------------------------------

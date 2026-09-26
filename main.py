@@ -10,6 +10,7 @@ One-shot (for cron / CI / scripts):
     python main.py --json "why is api-5d6f crash-looping?"   # structured report
     python main.py --resume --json "any update?"             # continue prior run
     python main.py --store-dir DIR --out report.json "..."   # pipeline paths
+    python main.py --model openai/gpt-4o-mini "..."          # one-run model override
 
 One-shot mode sends the problem once, prints the agent's report, and exits
 with a status code (0 = completed, 1 = setup/API error). With --json the
@@ -41,6 +42,7 @@ from openai import (
 )
 
 from agent.agent import DevOpsAgent
+from agent.config import config_path, save_user_config
 
 EXIT_WORDS = {"exit", "quit"}
 
@@ -55,6 +57,7 @@ COMMAND_ALIASES = {
     "/report": "/report",
     "/endinvestigation": "/endinvestigation",
     "/end": "/endinvestigation",
+    "/model": "/model",
 }
 
 
@@ -82,8 +85,32 @@ def handle_command(text: str, agent: DevOpsAgent) -> str | None:
         return agent.investigation_report_text() or "(no investigation recorded)"
     if canonical == "/endinvestigation":
         return agent.end_investigation()
+    if canonical == "/model":
+        return handle_model_command(rest, agent)
     return (f"unknown command: {cmd}. Try /investigate <problem>, "
-            "/investigation, /investigations, /report, /endinvestigation")
+            "/investigation, /investigations, /report, /endinvestigation, "
+            "/model")
+
+
+def handle_model_command(rest: str, agent: DevOpsAgent) -> str:
+    """/model (show the active model and where it came from) or /model <name>.
+
+    With a name: save it as the user's preference in the config file
+    (~/.devops-ai-agent/config.json) and switch this session to it. The
+    next run picks it up automatically — the flag and env still outrank it.
+    """
+    name = rest.strip()
+    if not name:
+        return (f"Model: {agent.model}\n"
+                f"Config file: {config_path()} "
+                "(save a default with /model <name>)")
+    if len(name.split()) != 1:
+        return "Model name must be a single token, e.g. /model openai/gpt-4o-mini"
+    path = save_user_config({"model": name})
+    agent.model = name
+    return (f"Model set to {name} (saved in {path}).\n"
+            "This session now uses it; the --model flag and OPENROUTER_MODEL "
+            "still override it per run.")
 
 
 class OneShotArgs(NamedTuple):
@@ -94,9 +121,10 @@ class OneShotArgs(NamedTuple):
     store_dir: str | None  # --store-dir PATH (persistence override)
     resume: bool           # --resume (continue the newest in-progress record)
     out: str | None        # --out PATH (also write the JSON report there)
+    model: str | None      # --model NAME (one-run model override)
 
 
-_VALUE_FLAGS = ("--store-dir", "--out")
+_VALUE_FLAGS = ("--store-dir", "--out", "--model")
 
 
 def _flag_value(argv: list[str], flag: str) -> str | None:
@@ -114,14 +142,16 @@ def parse_args(argv: list[str]) -> OneShotArgs:
     --json switches the one-shot output from markdown to the structured JSON
     report; --resume continues the newest in-progress record from the store;
     --store-dir PATH overrides the persistence directory for this run; --out
-    PATH additionally writes the JSON report to an exact path. Example:
+    PATH additionally writes the JSON report to an exact path; --model NAME
+    overrides the model for this run (highest model precedence). Example:
     `python main.py --json --out r.json "why is it down?"` ->
-    ("why is it down?", True, None, False, "r.json").
+    ("why is it down?", True, None, False, "r.json", None).
     """
     as_json = "--json" in argv
     do_resume = "--resume" in argv
     store_dir = _flag_value(argv, "--store-dir")
     out = _flag_value(argv, "--out")
+    model = _flag_value(argv, "--model")
     positionals: list[str] = []
     skip_next = False
     for arg in argv:
@@ -136,8 +166,8 @@ def parse_args(argv: list[str]) -> OneShotArgs:
         positionals.append(arg)
     text = " ".join(positionals).strip()
     if not positionals or not text:
-        return OneShotArgs(None, as_json, store_dir, do_resume, out)
-    return OneShotArgs(text, as_json, store_dir, do_resume, out)
+        return OneShotArgs(None, as_json, store_dir, do_resume, out, model)
+    return OneShotArgs(text, as_json, store_dir, do_resume, out, model)
 
 
 def run_one_shot(
@@ -147,6 +177,7 @@ def run_one_shot(
     store_dir: str | None = None,
     resume: bool = False,
     out: str | None = None,
+    model: str | None = None,
 ) -> int:
     """Non-interactive single run: send `task`, print the result, exit cleanly.
 
@@ -155,14 +186,14 @@ def run_one_shot(
     opened an investigation this is a hard failure (exit 1) — a caller asked
     for a report and there is none to give. The record is auto-saved on every
     mutation regardless; store_dir points persistence somewhere else for this
-    run, resume continues the newest in-progress record before asking, and
-    out additionally writes the JSON report to an exact path. `agent` lets
-    embedders reuse a configured agent (also the test seam); default builds a
-    fresh one from the environment.
+    run, resume continues the newest in-progress record before asking, out
+    additionally writes the JSON report to an exact path, and model overrides
+    the model for this run. `agent` lets embedders reuse a configured agent
+    (also the test seam); default builds a fresh one from the environment.
     """
     if agent is None:
         try:
-            agent = DevOpsAgent()
+            agent = DevOpsAgent(model=model)
         except ValueError as exc:
             print(f"[setup] {exc}", file=sys.stderr)
             return 1
@@ -245,10 +276,11 @@ def main() -> int:
             store_dir=args.store_dir,
             resume=args.resume,
             out=args.out,
+            model=args.model,
         )
 
     try:
-        agent = DevOpsAgent()
+        agent = DevOpsAgent(model=args.model)
     except ValueError as exc:
         print(f"[setup] {exc}", file=sys.stderr)
         return 1
@@ -268,9 +300,9 @@ def main() -> int:
     print(f"Store:   {agent.store_dir or '(persistence off)'}")
     print(f"Tools:   {tool_names}")
     print("Commands: /investigate <problem>, /investigation, /investigations, "
-          "/report, /endinvestigation")
+          "/report, /endinvestigation, /model [<name>]")
     print("One-shot: python main.py [--json] [--resume] [--out report.json] "
-          "[--store-dir DIR] \"<problem>\"")
+          "[--store-dir DIR] [--model NAME] \"<problem>\"")
     print("Type 'exit' to quit.")
     print()
 

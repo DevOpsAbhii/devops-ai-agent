@@ -6,6 +6,33 @@ versions follow [SemVer](https://semver.org/). Each version is published
 automatically when its `vX.Y.Z` tag is pushed (see
 `.github/workflows/release.yml`): PyPI + a multi-arch Docker image.
 
+## [Unreleased]
+
+### Added
+- **Model choice ladder**: the model is now set by precedence — `--model`
+  flag (one run) > `~/.devops-ai-agent/config.json` (saved via the new
+  `/model <name>` REPL command) > `OPENROUTER_MODEL` env > built-in
+  default. `/model` alone shows the active model and the config path.
+  New `agent/config.py` reads the config file tolerantly (missing or
+  corrupt → defaults, never a crash); `AGENT_CONFIG_FILE` overrides the
+  path for tests.
+- **Retries on transient model failures**: timeouts, connection errors,
+  429 rate limits, and server-side 5xx are retried up to 3 times with
+  exponential backoff (2s → 4s → 8s + jitter); a 429's `Retry-After`
+  header wins when present (clamped 1–60s). A rejected key (401) and
+  other client 4xx fail immediately — retrying cannot fix them. The retry
+  lives in `DevOpsAgent._call_model()` around the single model-call
+  chokepoint; no other behavior changed.
+- Tests: `ModelChoiceTests` (4) and `RetryTests` (8) — config round-trip,
+  precedence ladder, `/model` show/save, `--model` parsing, and offline
+  retry classification (connection errors retried then succeed, 429
+  honors Retry-After, 401/400 fail fast, retries exhaust loudly).
+  Suite: 169 → 181, green.
+
+### Changed
+- README: model-precedence section, `/model` in the command table, one-shot
+  examples, roadmap entry marked done; tests badge 169 → 181.
+
 ## [0.1.1] — 2026-09-26
 
 ### Added

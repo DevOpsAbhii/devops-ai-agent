@@ -1371,11 +1371,11 @@ story += [
         ["tests/test_phase5.py", "Argv templates for system/docker/tf/git "
                                  "+ gh, name validation, pinned flags"],
         ["tests/test_automation.py", "render_report_json shapes, agent "
-                                     "delegates, parse_args, one-shot exit "
-                                     "codes, JSON stdout purity, model-less "
-                                     "mode (construction, lazy key error, "
-                                     "keyless slash command, exit 1 "
-                                     "question)"],
+                                     "delegates, parse_args (--model too), "
+                                     "one-shot exit codes, JSON stdout "
+                                     "purity, model-less mode, model-choice "
+                                     "ladder (config.py, precedence, /model), "
+                                     "retry classification (RetryTests)"],
         ["tests/test_phase7.py", "to_dict/from_dict round trip, store files "
                                  "and resume, chokepoint auto-save, CLI "
                                  "flags (--store-dir/--resume/--out), "
@@ -1395,7 +1395,7 @@ story += [
 cd ~/devops-ai-agent
 source .venv/bin/activate
 python -m unittest discover -s tests -v
-# after v0.1.1: 169 tests, OK (1 skipped as root)
+# after the model-choice + retry work: 181 tests, OK (1 skipped as root)
 """, cap="Offline tests — no network, no API key needed."),
 ]
 
@@ -1437,15 +1437,35 @@ cp .env.example .env   # then edit: OPENROUTER_API_KEY=sk-or-...
       "runs with whatever subset you have."),
     H2("Model choice and model-less mode"),
     *bullets([
-        "OPENROUTER_MODEL overrides the default model — any model on "
-        "OpenRouter; pick a tool-caller (the agent is a tool-use loop) and "
-        "mind that an investigation makes several calls per run.",
+        "The model is set by a 4-rung ladder — the first one set wins: "
+        "(1) the --model flag for a single run; (2) the /model <name> "
+        "REPL command, which saves a default to "
+        "~/.devops-ai-agent/config.json (agent/config.py — tolerant reads: "
+        "a missing or corrupt file degrades to defaults, never a crash); "
+        "(3) the OPENROUTER_MODEL env var (shell or .env); (4) the "
+        "built-in default (z-ai/glm-5.3).",
+        "Any model on OpenRouter works; pick a tool-caller (the agent is "
+        "a tool-use loop) and mind that an investigation makes several "
+        "calls per run.",
         "OPENROUTER_BASE_URL points the same client at any "
         "OpenAI-compatible endpoint — e.g. a local Ollama "
         "(http://localhost:11434/v1) for a free, offline agent.",
         "No key at all: the agent starts model-less — record commands and "
         "the tool layer work; only questions exit 1 naming "
         "OPENROUTER_API_KEY.",
+    ]),
+    H2("Resilient model calls (retries)"),
+    *bullets([
+        "Transient failures retry automatically: timeouts, connection "
+        "errors, 429 rate limits, and server-side 5xx — up to 3 retries "
+        "with exponential backoff (2s -> 4s -> 8s plus jitter), capped at "
+        "60s.",
+        "A 429's Retry-After header wins when present (clamped to "
+        "1–60s) — the server knows its own budget.",
+        "Client errors never retry: a rejected key (401) or any other 4xx "
+        "fails immediately, because the identical request would fail "
+        "identically forever. The retry lives in DevOpsAgent._call_model() "
+        "around the single model-call chokepoint.",
     ]),
     H2("Run interactively (REPL)"),
     *code_text("""
@@ -1456,6 +1476,7 @@ cp .env.example .env   # then edit: OPENROUTER_API_KEY=sk-or-...
 #   /investigation           show the live tracked state
 #   /report                  show the canonical report (once concluded)
 #   /endinvestigation        clear the record (memory only)
+#   /model [<name>]          show the model, or save a default (config.json)
 """, cap="REPL mode."),
     H2("Run one-shot (cron / CI / scripts)"),
     *code_text("""
@@ -1463,6 +1484,7 @@ cp .env.example .env   # then edit: OPENROUTER_API_KEY=sk-or-...
 .venv/bin/python main.py --json "why is api-5d6f crash-looping?"   # structured report
 .venv/bin/python main.py --resume --json "any update?"             # continue prior run
 .venv/bin/python main.py --store-dir /tmp/runs --out report.json "..."
+.venv/bin/python main.py --model openai/gpt-5.2 "..."              # one-run model override
 .venv/bin/python main.py /report                                   # slash commands work one-shot
 """, cap="One-shot mode — exit 0 on success, 1 on setup/API errors."),
     H2("Persistence (Phase 7)"),
@@ -1541,7 +1563,7 @@ story += [
         "itself persists — Phase 7).",
         "Hypothesis tracking is model-driven: the record is what the model "
         "chose to record through the investigation tools.",
-        "No streaming, no retries/backoff yet.",
+        "No streaming yet (retries with exponential backoff are in).",
         "Read-only is enforced by construction today; mutating capabilities "
         "will only be added behind an explicit human-approval gate, much "
         "later.",
@@ -1559,11 +1581,15 @@ story += [
                      "and the prebuilt multi-arch GHCR image, cut by a "
                      "tag-driven release workflow (test gate, Trusted "
                      "Publishing)."],
+        ["Post-10", "Model choice + resilient calls (done): a 4-rung model "
+                    "ladder (--model flag > /model-saved config.json > "
+                    "OPENROUTER_MODEL > default) and bounded retries with "
+                    "exponential backoff on transient model-call failures "
+                    "(timeouts, connection errors, 429, 5xx)."],
         ["Later", "Region-scoped cloud resources (ec2 describe-*, compute "
                   "instances list, ...) behind the same template pattern; "
-                  "streaming; conversation-history persistence; a --model "
-                  "flag + per-user config file (flag > config > env > "
-                  "default); human-approval gate before any mutating "
+                  "streaming; conversation-history persistence; "
+                  "human-approval gate before any mutating "
                   "action is ever allowed."],
     ], [3.4 * cm, 13.1 * cm]),
     H2("Repository hygiene"),
