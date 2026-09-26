@@ -208,7 +208,7 @@ story += [
         ["Project", "devops-ai-agent  (~/devops-ai-agent)"],
         ["Model", "GLM 5.3  (z-ai/glm-5.3) via OpenRouter"],
         ["Language", "Python 3.10+ (stdlib tools + openai SDK + python-dotenv)"],
-        ["Phases complete", "1 – 9  (Phase 9: New Relic + trending DevOps tools — 58 read-only tools)"],
+        ["Phases complete", "1 – 10  (Phase 10: Distribution — PyPI package + prebuilt Docker image)"],
         ["Tools", "58 real, read-only tools across 15 domains"],
         ["Generated", TODAY],
     ], [4.2 * cm, 12.3 * cm]),
@@ -241,7 +241,7 @@ story += [
       "flows, how tool selection + execution + evidence feedback work — "
       "instead of depending on a framework for it. No LangChain, LangGraph, "
       "AutoGen, CrewAI or MCP anywhere."),
-    H2("What the agent does today (Phases 1–9)"),
+    H2("What the agent does today (Phases 1–10)"),
     *bullets([
         "Holds a conversation with GLM 5.3 through OpenRouter's "
         "OpenAI-compatible endpoint.",
@@ -263,6 +263,10 @@ story += [
         "Exposes a one-shot CLI (python main.py “problem”) with "
         "exit codes for cron/CI, plus a structured --json export of the "
         "investigation report so pipelines can act on the verdict.",
+        "Installs without cloning the repo: the devopsiq package on PyPI "
+        "(console command devopsiq) and a prebuilt multi-arch Docker image "
+        "(ghcr.io/devopsabhii/devops-ai-agent) — both cut automatically by "
+        "a tag-driven release workflow.",
     ]),
     H2("Read-only by design"),
     P("Every tool is a static, allowlisted command template — the model can "
@@ -303,6 +307,11 @@ story += [
               "New Relic (NRQL + alerts over NerdGraph, env credentials), "
               "Trivy image scanning, Helm releases, Argo CD GitOps, Istio "
               "mesh status, Docker Compose.", "Done"],
+        ["10", "Distribution: the devopsiq package on PyPI (console "
+               "command, MIT) and a prebuilt GHCR Docker image "
+               "(multi-arch, non-root, bundled CLIs), cut by a tag-driven "
+               "release workflow with a test gate and Trusted "
+               "Publishing.", "Done"],
     ], [1.6 * cm, 11.4 * cm, 1.5 * cm]),
     PageBreak(),
 ]
@@ -1174,9 +1183,89 @@ def test_invalid_image_refs_rejected(self):
     PageBreak(),
 ]
 
-# ---- 12. safety ------------------------------------------------------------- #
+# ---- 12. phase 10 ----------------------------------------------------------- #
 story += [
-    H1("12. How read-only is enforced (defense in depth)"),
+    H1("12. Phase 10 — Distribution: PyPI package and prebuilt image"),
+    P("Phase 10 makes the agent installable without cloning the repo. Two "
+      "distribution channels, both cut automatically by pushing a v* tag: "
+      "the devopsiq package on PyPI (console command devopsiq, MIT) and a "
+      "prebuilt multi-arch Docker image at "
+      "ghcr.io/devopsabhii/devops-ai-agent that bundles the agent plus "
+      "kubectl, helm, gh, trivy, git, curl and the docker CLI. No "
+      "application code changed — packaging, licensing, containerization "
+      "and CI only. The one-shot CLI surface is unchanged, so everything "
+      "documented for python main.py works identically as devopsiq."),
+    table(["File", "Role"], [
+        ["pyproject.toml", "Package metadata: name devopsiq, version, MIT "
+                           "license (PEP 639), dependencies, console "
+                           "script devopsiq = main:main, shipped packages "
+                           "agent/ + tools/ + main.py"],
+        ["LICENSE", "MIT, Copyright (c) 2026 DevOpsAbhii"],
+        ["Dockerfile", "python:3.12-slim + pinned CLIs (kubectl, helm, "
+                       "trivy, gh) + app, non-root user, /data record "
+                       "store"],
+        [".dockerignore", "Keeps .git/.venv/.env/PDF/tests out of the "
+                          "build context"],
+        [".github/workflows/release.yml", "On v* tags: test gate, then "
+                                          "PyPI (Trusted Publishing) and "
+                                          "GHCR (multi-arch) in parallel"],
+    ], [5.0 * cm, 11.5 * cm], mono_cols=(0,)),
+    H2("The PyPI package (pyproject.toml)"),
+    P("setuptools via PEP 621. The importable surface ships in full "
+      "(agent/, tools/, main.py — level-2 library integration works from "
+      "the installed package too), tests/docs stay out, and the console "
+      "command runs the exact one-shot CLI:"),
+    *code("pyproject.toml"),
+    PageBreak(),
+    H2("The Docker image (Dockerfile)"),
+    P("Layers ordered for cache friendliness (apt → pip deps → pinned "
+      "CLIs → app). CLIs come from their official release endpoints at "
+      "ARG-pinned versions. CLIs NOT bundled (terraform, argocd, "
+      "istioctl, aws/gcloud/az, ansible, systemd) are documented in the "
+      "Dockerfile header — a missing CLI still fails with its exact "
+      "error, so a custom layer can add just what an operator needs. "
+      "Runs as non-root user agent (uid 1000) with AGENT_STORE_DIR=/data, "
+      "so investigation records survive restarts via "
+      "-v agent-records:/data:"),
+    *code("Dockerfile", "dockerfile"),
+    PageBreak(),
+    H2("The release pipeline (.github/workflows/release.yml)"),
+    P("Push a v* tag and three jobs run: an offline test gate first, then "
+      "PyPI and GHCR in parallel. PyPI uses Trusted Publishing — the "
+      "workflow proves itself to PyPI with an OIDC token, so no "
+      "credential lives in the repo (registered once on pypi.org as "
+      "owner DevOpsAbhii / repo devops-ai-agent / workflow release.yml / "
+      "environment pypi); a PYPI_TOKEN secret remains the documented "
+      "fallback. GHCR authenticates with the workflow's own GITHUB_TOKEN "
+      "and builds linux/amd64 + linux/arm64 with buildx. One real-world "
+      "gotcha cost the first run: a job-level permissions block replaces "
+      "the workflow-level one (it does not merge), so contents: read had "
+      "to be redeclared in each publish job or checkout could not see "
+      "the repository:"),
+    *code(".github/workflows/release.yml", "yaml"),
+    PageBreak(),
+    *code(".dockerignore", "config"),
+    H2("Verified end to end"),
+    *bullets([
+        "python -m build produces the sdist and wheel; wheel contents "
+        "checked (agent/, tools/, main.py) and installed into a throwaway "
+        "venv — devopsiq /report then ran from an unrelated cwd, exit 0.",
+        "Local docker build; docker run with a dummy key printed the "
+        "no-investigation message, exited 0, showed the 58-tool banner, "
+        "and runs as the non-root agent user.",
+        "Full offline suite after Phase 10: 164 tests green.",
+        "Live: devopsiq 0.1.0 published on PyPI (wheel + sdist) via "
+        "Trusted Publishing; a fresh venv pip-installed devopsiq from "
+        "PyPI and ran it with no repo present; "
+        "ghcr.io/devopsabhii/devops-ai-agent:0.1.0 and :latest pull "
+        "anonymously and are amd64+arm64 manifest lists.",
+    ]),
+    PageBreak(),
+]
+
+# ---- 13. safety ------------------------------------------------------------- #
+story += [
+    H1("13. How read-only is enforced (defense in depth)"),
     *bullets([
         "The tool schemas only allow picking names/counts/namespaces from "
         "validated arguments — there is no way to pass command text to any "
@@ -1232,9 +1321,9 @@ story += [
     PageBreak(),
 ]
 
-# ---- 11. testing ----------------------------------------------------------- #
+# ---- 14. testing ----------------------------------------------------------- #
 story += [
-    H1("13. Testing"),
+    H1("14. Testing"),
     P("Everything is offline: tests make no network calls and need no API "
       "key. Fake clients stand in for the model, and stub CLIs on PATH "
       "prove the exact argv the application builds. Real cluster/container "
@@ -1261,20 +1350,41 @@ story += [
                                  "k8s top/hpa/pvc validation, digits-only "
                                  "gh run ids, env-configured monitoring "
                                  "endpoints, ansible path validation"],
+        ["tests/test_phase9.py", "New Relic env credentials + payload "
+                                 "construction (alerts ignores model args), "
+                                 "trivy image-ref validation, helm/argocd/"
+                                 "istio argv, compose project names, "
+                                 "registry phase-9 set (58)"],
     ], [5.4 * cm, 11.1 * cm], mono_cols=(0,)),
     H2("Run the suite"),
     *code_text("""
 cd ~/devops-ai-agent
 source .venv/bin/activate
 python -m unittest discover -s tests -v
-# after Phase 8: 145 tests, OK (1 skipped as root)
+# after Phase 10: 164 tests, OK (1 skipped as root)
 """, cap="Offline tests — no network, no API key needed."),
 ]
 
-# ---- 12. usage ------------------------------------------------------------- #
+# ---- 15. usage ------------------------------------------------------------- #
 story += [
-    H1("14. Installation and usage"),
-    H2("Install"),
+    H1("15. Installation and usage"),
+    H2("Install — the published package or image (Phase 10)"),
+    *code_text("""
+pipx install devopsiq        # or: pip install devopsiq (PyPI)
+
+docker run --rm \
+  -e OPENROUTER_API_KEY=sk-or-... \
+  -v "$HOME/.kube:/home/agent/.kube:ro" \
+  -v agent-records:/data \
+  ghcr.io/devopsabhii/devops-ai-agent --json "check the cluster"
+""", cap="Fastest — the PyPI package or the prebuilt multi-arch image."),
+    P("The console command is devopsiq and behaves exactly like "
+      "python main.py below. The image bundles kubectl, helm, gh, trivy, "
+      "git, curl and the docker CLI; add "
+      "-v /var/run/docker.sock:/var/run/docker.sock for the Docker/Compose "
+      "tools. Whatever the install route, the agent still needs the CLIs "
+      "of the domains you use:"),
+    H2("Install — from source (development)"),
     *code_text("""
 cd ~/devops-ai-agent
 python3 -m venv .venv
@@ -1351,14 +1461,19 @@ You: exit
     PageBreak(),
 ]
 
-# ---- 13. limitations & roadmap ---------------------------------------------- #
+# ---- 16. limitations & roadmap ---------------------------------------------- #
 story += [
-    H1("15. Current limitations"),
+    H1("16. Current limitations"),
     *bullets([
         "Each domain needs its CLI installed and reachable; missing CLIs, "
         "unauthenticated gh, a dead docker daemon, an uninitialized "
         "terraform directory or an unreachable cluster return the exact "
         "error honestly — but a tool can't produce data without its backend.",
+        "The prebuilt Docker image bundles kubectl, helm, trivy, gh, git, "
+        "curl and the docker CLI only; terraform, argocd, istioctl, "
+        "aws/gcloud/az, ansible and systemd-backed system tools need your "
+        "own image layer (documented in the Dockerfile header) or a "
+        "non-container host.",
         "terraform/git/gh/ansible tools are working-directory scoped (no "
         "path arguments by design — keeps traversal out). To investigate "
         "another repo/module, launch the agent there.",
@@ -1385,12 +1500,19 @@ story += [
         "will only be added behind an explicit human-approval gate, much "
         "later.",
     ]),
-    H1("16. Roadmap"),
+    H1("17. Roadmap"),
     table(["Phase", "Scope"], [
         ["Phase 8", "Tool expansion (done): 21 more read-only tools (26 → "
                     "47) — k8s depth, Docker depth, GitHub Actions, cloud "
                     "identity, monitoring (env-configured), Ansible "
                     "listing."],
+        ["Phase 9", "Trending-market tools (done): 11 more read-only tools "
+                    "(47 → 58) — New Relic (env-credentialed NerdGraph), "
+                    "Trivy, Helm, Argo CD, Istio, Docker Compose."],
+        ["Phase 10", "Distribution (done): the devopsiq package on PyPI "
+                     "and the prebuilt multi-arch GHCR image, cut by a "
+                     "tag-driven release workflow (test gate, Trusted "
+                     "Publishing)."],
         ["Later", "Region-scoped cloud resources (ec2 describe-*, compute "
                   "instances list, ...) behind the same template pattern; "
                   "streaming; conversation-history persistence; "
