@@ -36,7 +36,9 @@ jobs:
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
-      # Trusted Publishing: the OIDC token proves this workflow to PyPI.
+      contents: read        # job-level permissions replace, not merge —
+      # keep read access for checkout. Trusted Publishing: the OIDC token
+      # proves this workflow to PyPI.
       id-token: write
     steps:
       - uses: actions/checkout@v4
@@ -53,7 +55,8 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     permissions:
-      packages: write
+      contents: read        # job-level permissions replace, not merge —
+      packages: write       # keep read access for checkout
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
