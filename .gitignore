@@ -13,3 +13,6 @@ __pycache__/
 
 # OS / editor
 .DS_Store
+
+# Generated documentation PDF
+DevOps_AI_Agent_Documentation.pdf

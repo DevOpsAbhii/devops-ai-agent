@@ -1,0 +1,992 @@
+#!/usr/bin/env python3
+"""Generate the DevOps AI Agent project documentation PDF.
+
+Reads the real source files from the repository so the code in the PDF is
+always the code that ships. Run from anywhere:
+
+    .venv/bin/python docs/generate_pdf.py
+"""
+
+import datetime
+import os
+from xml.sax.saxutils import escape
+
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import cm
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.platypus import (
+    BaseDocTemplate,
+    PageTemplate,
+    Frame,
+    Paragraph,
+    Spacer,
+    Table,
+    TableStyle,
+    Preformatted,
+    PageBreak,
+    KeepTogether,
+)
+from reportlab.platypus.tableofcontents import TableOfContents
+
+ROOT = "/home/abhishek/devops-ai-agent"
+OUT = os.path.join(ROOT, "DevOps_AI_Agent_Documentation.pdf")
+
+# --------------------------------------------------------------------------- #
+# Palette
+# --------------------------------------------------------------------------- #
+INK = colors.HexColor("#1a2332")          # near-black blue
+ACCENT = colors.HexColor("#2563eb")       # blue
+ACCENT_SOFT = colors.HexColor("#dbeafe")
+CODE_BG = colors.HexColor("#f4f5f7")
+CODE_BORDER = colors.HexColor("#d8dbe0")
+MUTED = colors.HexColor("#5b6472")
+RULE = colors.HexColor("#c9ced6")
+
+# --------------------------------------------------------------------------- #
+# Styles
+# --------------------------------------------------------------------------- #
+S = {}
+S["cover_title"] = ParagraphStyle("cover_title", fontName="Helvetica-Bold",
+    fontSize=30, leading=36, textColor=INK, alignment=TA_CENTER)
+S["cover_sub"] = ParagraphStyle("cover_sub", fontName="Helvetica",
+    fontSize=13.5, leading=19, textColor=MUTED, alignment=TA_CENTER)
+S["cover_meta"] = ParagraphStyle("cover_meta", fontName="Helvetica",
+    fontSize=11, leading=16, textColor=INK, alignment=TA_CENTER)
+S["h1"] = ParagraphStyle("h1", fontName="Helvetica-Bold", fontSize=17,
+    leading=21, textColor=INK, spaceBefore=6, spaceAfter=10, keepWithNext=1)
+S["h2"] = ParagraphStyle("h2", fontName="Helvetica-Bold", fontSize=13,
+    leading=17, textColor=ACCENT, spaceBefore=12, spaceAfter=6, keepWithNext=1)
+S["h3"] = ParagraphStyle("h3", fontName="Helvetica-Bold", fontSize=11,
+    leading=15, textColor=INK, spaceBefore=10, spaceAfter=4, keepWithNext=1)
+S["body"] = ParagraphStyle("body", fontName="Helvetica", fontSize=10,
+    leading=14.5, textColor=INK, alignment=TA_JUSTIFY, spaceAfter=6)
+S["bullet"] = ParagraphStyle("bullet", parent=S["body"], leftIndent=16,
+    bulletIndent=4, spaceAfter=3)
+S["code"] = ParagraphStyle("code", fontName="Courier", fontSize=7.6,
+    leading=9.4, textColor=INK, backColor=CODE_BG, borderColor=CODE_BORDER,
+    borderWidth=0.7, borderPadding=6, spaceAfter=8)
+S["code_cap"] = ParagraphStyle("code_cap", fontName="Courier-Bold", fontSize=8.4,
+    leading=12, textColor=ACCENT, spaceBefore=8, spaceAfter=3, keepWithNext=1)
+S["cap"] = ParagraphStyle("cap", fontName="Helvetica-Oblique", fontSize=9,
+    leading=12, textColor=MUTED, spaceAfter=8)
+S["cell"] = ParagraphStyle("cell", fontName="Helvetica", fontSize=8.6,
+    leading=11.5, textColor=INK)
+S["cell_mono"] = ParagraphStyle("cell_mono", parent=S["cell"],
+    fontName="Courier", fontSize=8.2)
+S["cell_head"] = ParagraphStyle("cell_head", fontName="Helvetica-Bold",
+    fontSize=8.6, leading=11.5, textColor=colors.white)
+S["toc_title"] = ParagraphStyle("toc_title", parent=S["h1"], spaceAfter=14)
+
+
+def wrap_code(text: str, width: int = 96) -> str:
+    """Hard-wrap over-long source lines so nothing overflows the frame."""
+    out = []
+    for line in text.splitlines():
+        line = line.rstrip()
+        while len(line) > width:
+            cut = line.rfind(" ", 40, width)
+            if cut <= 0:
+                cut = width
+            out.append(line[:cut])
+            line = "    " + line[cut:].lstrip()
+        out.append(line)
+    return "\n".join(out)
+
+
+def read(rel: str) -> str:
+    with open(os.path.join(ROOT, rel), encoding="utf-8") as fh:
+        return fh.read().rstrip()
+
+
+def code(file: str, lang: str = "python") -> list:
+    """A captioned, escaped code block built from a real repository file."""
+    src = wrap_code(escape(read(file)))
+    return [Paragraph(file + "   (" + lang + ")", S["code_cap"]),
+            Preformatted(src, S["code"])]
+
+
+def code_text(text: str, cap: str | None = None) -> list:
+    src = wrap_code(escape(text))
+    out = []
+    if cap:
+        out.append(Paragraph(cap, S["code_cap"]))
+    out.append(Preformatted(src, S["code"]))
+    return out
+
+
+def bullets(items: list[str]) -> list:
+    return [Paragraph(t, S["bullet"], bulletText="•") for t in items]
+
+
+def table(headers: list[str], rows: list[list[str]], widths: list,
+          mono_cols: tuple = ()) -> Table:
+    data = [[Paragraph(escape(h), S["cell_head"]) for h in headers]]
+    for row in rows:
+        data.append([
+            Paragraph(escape(c), S["cell_mono" if i in mono_cols else "cell"])
+            for i, c in enumerate(row)
+        ])
+    t = Table(data, colWidths=widths, repeatRows=1, hAlign="LEFT")
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), ACCENT),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, ACCENT_SOFT]),
+        ("GRID", (0, 0), (-1, -1), 0.4, RULE),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    return t
+
+
+# --------------------------------------------------------------------------- #
+# Document template with running header/footer + TOC capture
+# --------------------------------------------------------------------------- #
+class Doc(BaseDocTemplate):
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.section = ""
+
+    def afterFlowable(self, fl):
+        if isinstance(fl, Paragraph):
+            style = fl.style.name
+            if style in ("h1", "h2"):
+                text = fl.getPlainText()
+                level = 0 if style == "h1" else 1
+                key = "h-%s-%d" % (style, abs(hash((text, self.page))))
+                self.canv.bookmarkPage(key)
+                self.notify("TOCEntry", (level, text, self.page, key))
+                if style == "h1":
+                    self.section = text
+                self.canv.addOutlineEntry(text, key, level=level, closed=False)
+
+
+def on_page(canv, doc):
+    canv.saveState()
+    if doc.page > 1:  # skip cover
+        canv.setStrokeColor(RULE)
+        canv.setLineWidth(0.6)
+        canv.line(2 * cm, A4[1] - 1.5 * cm, A4[0] - 2 * cm, A4[1] - 1.5 * cm)
+        canv.setFont("Helvetica", 8)
+        canv.setFillColor(MUTED)
+        canv.drawString(2 * cm, A4[1] - 1.25 * cm, "DevOps AI Agent — Project Documentation")
+        sec = getattr(doc, "section", "")
+        if sec:
+            canv.drawRightString(A4[0] - 2 * cm, A4[1] - 1.25 * cm, sec[:70])
+        canv.setFont("Helvetica-Bold", 8.5)
+        canv.setFillColor(ACCENT)
+        canv.drawCentredString(A4[0] / 2, 1.05 * cm, "Page %d" % doc.page)
+    canv.restoreState()
+
+
+# --------------------------------------------------------------------------- #
+# Story
+# --------------------------------------------------------------------------- #
+story = []
+TODAY = datetime.date.today().strftime("%d %B %Y")
+
+
+def H1(t): return Paragraph(escape(t), S["h1"])
+def H2(t): return Paragraph(escape(t), S["h2"])
+def H3(t): return Paragraph(escape(t), S["h3"])
+def P(t): return Paragraph(escape(t), S["body"])
+
+
+# ---- cover ---------------------------------------------------------------- #
+story += [
+    Spacer(1, 5.2 * cm),
+    Paragraph("DevOps AI Agent", S["cover_title"]),
+    Spacer(1, 0.7 * cm),
+    Paragraph("A from-scratch, read-only AI agent that investigates real "
+              "infrastructure problems — with the full code walkthrough",
+              S["cover_sub"]),
+    Spacer(1, 1.6 * cm),
+    table(["", ""], [
+        ["Project", "devops-ai-agent  (~/devops-ai-agent)"],
+        ["Model", "GLM 5.3  (z-ai/glm-5.3) via OpenRouter"],
+        ["Language", "Python 3.10+ (stdlib tools + openai SDK + python-dotenv)"],
+        ["Phases complete", "1 – 6  (Phase 6: one-shot CLI, JSON reports, git-tracked)"],
+        ["Tools", "26 real, read-only tools across 6 domains"],
+        ["Generated", TODAY],
+    ], [4.2 * cm, 12.3 * cm]),
+    Spacer(1, 2.2 * cm),
+    Paragraph("Built without LangChain, LangGraph, AutoGen, CrewAI or MCP — "
+              "every layer owned, every command allowlisted.", S["cover_meta"]),
+    PageBreak(),
+]
+
+# ---- TOC ------------------------------------------------------------------ #
+toc = TableOfContents()
+toc.levelStyles = [
+    ParagraphStyle("toc1", fontName="Helvetica-Bold", fontSize=11, leading=16,
+                   leftIndent=4, textColor=INK),
+    ParagraphStyle("toc2", fontName="Helvetica", fontSize=9.5, leading=13.5,
+                   leftIndent=18, textColor=INK),
+]
+story += [H1("Contents"), toc, PageBreak()]
+
+# ---- 1. overview ----------------------------------------------------------- #
+story += [
+    H1("1. Project overview"),
+    P("DevOps AI Agent is an AI agent that investigates real DevOps problems. "
+      "The end goal: ask it something like “Why is my Kubernetes pod in "
+      "CrashLoopBackOff?” and have it gather evidence, reason about that "
+      "evidence, identify the likely root cause, recommend remediation, and "
+      "give verification steps."),
+    P("The agent is built intentionally: the project owns the core "
+      "architecture — how the model is called, how conversation history "
+      "flows, how tool selection + execution + evidence feedback work — "
+      "instead of depending on a framework for it. No LangChain, LangGraph, "
+      "AutoGen, CrewAI or MCP anywhere."),
+    H2("What the agent does today (Phases 1–6)"),
+    *bullets([
+        "Holds a conversation with GLM 5.3 through OpenRouter's "
+        "OpenAI-compatible endpoint.",
+        "Has 26 real, read-only tools across six domains: host facts, "
+        "Kubernetes (6), Linux system (4), Docker (5), Terraform (3), "
+        "git/GitHub (4), plus the 3 investigation meta-tools.",
+        "Runs a tool-use loop: when the model decides a question needs "
+        "evidence, it requests the tool, the application executes it locally, "
+        "and the real output is fed back to the model, which then answers "
+        "from it.",
+        "Runs an investigation loop: for a reported problem it opens a "
+        "record with initial hypotheses, gathers evidence with the right "
+        "domain tools, updates each hypothesis's verdict, concludes with "
+        "root cause + remediation + verification, and ends with a structured "
+        "report.",
+        "Exposes a one-shot CLI (python main.py “problem”) with "
+        "exit codes for cron/CI, plus a structured --json export of the "
+        "investigation report so pipelines can act on the verdict.",
+    ]),
+    H2("Read-only by design"),
+    P("Every tool is a static, allowlisted command template — the model can "
+      "never pass arbitrary command text, can never select a mutating verb "
+      "(no delete/restart/edit/apply/scale/exec/run/rm/reset/destroy "
+      "anywhere), and no mutating capability exists. Object and unit names "
+      "are validated before reaching any CLI; flags are injected only by "
+      "fixed templates, never by model text. Any future mutating capability "
+      "will only ever arrive behind an explicit human-approval gate."),
+]
+
+story += [
+    H2("Phase summary"),
+    table(["Phase", "Scope", "Status"], [
+        ["1", "Foundation: repo skeleton, venv, .env, OpenAI client through "
+              "OpenRouter.", "Done"],
+        ["2", "Tool architecture: Tool contract, registry, tool-use loop, "
+              "first real tool (system_info), offline + live tests.", "Done"],
+        ["3", "Kubernetes tooling: read-only kubectl-backed tools (pod "
+              "status/logs, deployment status), name validation, verb "
+              "allowlist.", "Done"],
+        ["4", "Investigation loop: first-class in-memory record (hypotheses, "
+              "evidence, verdicts), meta-tools, structured report.", "Done"],
+        ["5", "Multi-domain tooling: Linux system, Docker, k8s depth "
+              "(events/nodes/services), Terraform, git/GitHub — all "
+              "read-only.", "Done"],
+        ["6", "Automation surface: one-shot CLI with exit codes, structured "
+              "JSON report export, repository git-tracked.", "Done"],
+    ], [1.6 * cm, 11.4 * cm, 1.5 * cm]),
+    PageBreak(),
+]
+
+# ---- 2. architecture ------------------------------------------------------- #
+story += [
+    H1("2. Architecture"),
+    H2("Request flow"),
+    *code_text("""
+You (terminal)
+   |  plain text
+   v
+main.py ......................... CLI REPL / one-shot, .env loading, errors
+   |
+   v
+agent/agent.py (DevOpsAgent) .... system prompt + conversation history
+   |
+   v  the tool-use loop, inside DevOpsAgent._complete():
+   |
+   |   attach tool schemas -> call model
+   |        |
+   |        +- model requests tool(s)? -- yes --> tools/registry.execute_tool()
+   |        |                                    |   per call, in order
+   |        |                                    |     -> allowlisted read-only
+   |        |                                    |        command runs for real
+   |        |                                    |     -> result echoed back as
+   |        |                                    |        a "tool" message
+   |        |                                    <-- loop calls the model again
+   |        +- model answers in plain text? -- yes --> done
+   |              (safety cap: max 10 tool-use turns, then abort)
+   v
+OpenRouter (https://openrouter.ai/api/v1)
+   v
+GLM 5.3 (z-ai/glm-5.3)
+""", cap="The full request flow, from the terminal to the model and back."),
+    H2("Module map"),
+    table(["Path", "Responsibility"], [
+        ["main.py", "REPL loop, one-shot CLI, environment loading, slash "
+                    "commands, error messages"],
+        ["agent/agent.py", "DevOpsAgent — client, history, ask(), _complete() "
+                           "loop"],
+        ["agent/prompts.py", "The system prompt (versioned/tested separately)"],
+        ["agent/investigation.py", "Investigation record: hypotheses, "
+                                   "verdicts, evidence, report renderer "
+                                   "(pure data)"],
+        ["tools/base.py", "Tool contract: Tool, ToolError, "
+                          "read_command_output()"],
+        ["tools/registry.py", "register/get_tools/execute_tool — tools are "
+                              "declared and executed here"],
+        ["tools/preflight.py", "system_info — host facts (allowlisted "
+                               "read-only commands)"],
+        ["tools/kubernetes.py", "6 kubectl tools: pod status/logs, deployment, "
+                                "events, nodes, services"],
+        ["tools/system.py", "systemd/journal/ss/ps tools"],
+        ["tools/docker.py", "docker ps/inspect/logs/stats/images"],
+        ["tools/terraform.py", "tf_show / tf_state_list / tf_plan"],
+        ["tools/git_ci.py", "git status/log/diff + gh_prs"],
+        ["tools/investigation.py", "investigation_begin / _record / _conclude "
+                                   "meta-tools"],
+        ["tests/test_phase2.py", "Offline suite: contract, safety, loop"],
+        ["tests/test_phase3.py", "Offline suite: k8s command lines + verb "
+                                 "allowlist (fake kubectl)"],
+        ["tests/test_phase4.py", "Offline suite: investigation state, "
+                                 "meta-tools, loop-driven investigation"],
+        ["tests/test_phase5.py", "Offline suite: argv templates + name "
+                                 "validation for all new domains"],
+        ["tests/test_automation.py", "Offline suite: JSON reports + one-shot "
+                                     "CLI (Phase 6)"],
+    ], [5.4 * cm, 11.1 * cm], mono_cols=(0,)),
+    PageBreak(),
+]
+
+# ---- 3. phase 1 ------------------------------------------------------------ #
+story += [
+    H1("3. Phase 1 — Foundation"),
+    P("Phase 1 lays the ground the rest builds on: a clean virtual "
+      "environment, a deliberately minimal dependency list, secret handling "
+      "from the first day, and one chokepoint where the model is called."),
+    H2("Dependencies"),
+    P("The dependency list is two packages. OpenRouter exposes an "
+      "OpenAI-compatible API, so the official OpenAI SDK is the only client "
+      "library needed; python-dotenv loads .env without touching shell "
+      "state."),
+    *code("requirements.txt", "config"),
+    *code(".env.example", "config"),
+    H2("Secrets and configuration rules"),
+    *bullets([
+        ".env is gitignored; the API key is never hard-coded, printed or "
+        "logged.",
+        "Configuration resolution order is explicit argument > environment "
+        "> default (in DevOpsAgent.__init__).",
+        "A placeholder key is rejected with a clear message, so a copied "
+        ".env.example cannot silently fail at the API.",
+        "If OPENROUTER_API_KEY is already set in the shell, the shell value "
+        "wins and .env is not consulted.",
+    ]),
+    H2("Pointing the OpenAI SDK at OpenRouter"),
+    *code_text("""
+from openai import OpenAI
+
+# OpenRouter exposes an OpenAI-compatible API, so the official OpenAI
+# SDK is a drop-in client — just pointed at OpenRouter's base URL.
+self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+
+# defaults (agent/agent.py)
+DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
+DEFAULT_MODEL = "z-ai/glm-5.3"
+""", cap="The two config lines that make the openai SDK speak to OpenRouter."),
+    P("Swapping to another OpenRouter model later is a one-line change (an "
+      "env var today); moving to any other OpenAI-compatible provider "
+      "changes only agent/agent.py configuration."),
+    PageBreak(),
+]
+
+# ---- 4. phase 2 ------------------------------------------------------------ #
+story += [
+    H1("4. Phase 2 — Tool architecture"),
+    P("Phase 2 builds the machinery every later phase reuses: a Tool "
+      "contract, a registry, a safe command executor, and the tool-use loop "
+      "that lets the model request tools and receive real output."),
+    H2("The Tool contract (tools/base.py)"),
+    P("A Tool bundles four things: a stable name the model calls, a "
+      "description (which is what the model actually reads), a JSON Schema "
+      "for its arguments, and a local executor that receives parsed "
+      "arguments and returns evidence text."),
+    *code("tools/base.py"),
+    H2("The registry (tools/registry.py)"),
+    P("Tools self-register at import time. execute_tool() never raises: "
+      "every failure — unknown tool, unparseable JSON, executor error — "
+      "becomes a “Tool error: ...” string the model can read and "
+      "adapt to, keeping the conversation loop alive."),
+    *code("tools/registry.py"),
+    H2("The first real tool (tools/preflight.py)"),
+    P("system_info proves the whole loop while staying strictly read-only: "
+      "the model may only choose among static allowlisted commands; its "
+      "parameter can never carry arbitrary command text."),
+    *code("tools/preflight.py"),
+    H2("The tool-use loop (agent/agent.py)"),
+    P("All model calls funnel through DevOpsAgent._complete(). Each turn: "
+      "(1) the full history is sent with every tool's schema attached; "
+      "(2) if the reply contains tool calls, the assistant tool-request turn "
+      "is echoed into history verbatim and each call is executed locally; "
+      "(3) every real result is appended as a sibling “tool” "
+      "message pinned to its tool_call_id; (4) the loop calls the model "
+      "again — giving it the evidence to reflect on — and repeats until it "
+      "answers in plain text. MAX_TOOL_ITERATIONS = 10 aborts runaway loops."),
+    *code_text("""
+MAX_TOOL_ITERATIONS = 10
+
+def _complete(self) -> str:
+    \"\"\"The tool-use loop — the single chokepoint where the backend is called.\"\"\"
+    for _ in range(MAX_TOOL_ITERATIONS):
+        request: dict = {"model": self.model, "messages": self.messages}
+        if self.tools:
+            request["tools"] = [tool.schema() for tool in self.tools]
+
+        response = self.client.chat.completions.create(**request)
+        message = response.choices[0].message
+
+        if not message.tool_calls:
+            content = message.content
+            if content is None:
+                raise RuntimeError("The model returned an empty response.")
+            return content
+
+        # Echo the assistant tool-request turn verbatim, then answer each
+        # call with a sibling "tool" message referencing its call id.
+        self.messages.append(_echo_tool_request(message))
+        for call in message.tool_calls:
+            result = execute_tool(call.function.name, call.function.arguments)
+            self.messages.append(
+                {"role": "tool", "tool_call_id": call.id, "content": result}
+            )
+
+    raise RuntimeError(
+        f"The model did not finish after {MAX_TOOL_ITERATIONS} tool-use turns."
+    )
+""", cap="agent/agent.py — the loop every later phase reuses."),
+    H2("Phase 2 tests (offline)"),
+    P("tests/test_phase2.py swaps the real OpenAI client for a fake one so "
+      "the loop logic is exercised deterministically. The system_info tool "
+      "still runs for real (it executes only allowlisted read-only "
+      "commands), and a security test proves the model cannot smuggle "
+      "arbitrary commands through arguments:"),
+    *code_text("""
+def test_execute_rejects_non_allowlisted_command(self):
+    # Proof the model cannot smuggle arbitrary commands through arguments:
+    # the call must fail with an error, never run anything.
+    result = execute_tool("system_info", '{"command": "rm -rf /"}')
+    self.assertTrue(result.startswith("Tool error"))
+    self.assertIn("unknown command", result)
+    self.assertEqual(result.count("\\n"), 0)  # single-line error, no output
+
+def test_loop_executes_tool_and_returns_final_answer(self):
+    responses = FakeResponses([_tool_call_response(), _text_response("Reboot buddy.")])
+    agent = self.make_agent(responses)
+    answer = agent.ask("What OS is this host running? Use your tool.")
+    self.assertEqual(answer, "Reboot buddy.")
+    roles = [m["role"] for m in agent.messages]
+    self.assertEqual(roles, ["system", "user", "assistant", "tool", "assistant"])
+    tool_msg = agent.messages[3]
+    self.assertIn("$ uname -a", tool_msg["content"])  # real output was used
+""", cap="tests/test_phase2.py — the safety proof and the loop proof."),
+    PageBreak(),
+]
+
+# ---- 5. phase 3 ------------------------------------------------------------ #
+story += [
+    H1("5. Phase 3 — Kubernetes tooling"),
+    P("Phase 3 adds the first domain tools: kubectl-backed, read-only. The "
+      "safety model is defense in depth — only get/logs verbs exist, "
+      "hard-coded in argv templates; there is no sh -c anywhere, so nothing "
+      "is ever parsed by a shell; object names are validated against "
+      "Kubernetes naming rules before touching kubectl, blocking flag "
+      "injection (names starting with “-”) and garbage input; "
+      "--request-timeout plus a subprocess timeout bound slow or hung "
+      "clusters."),
+    *code("tools/kubernetes.py"),
+    P("Output is real kubectl JSON/text — Python does not re-parse it, so "
+      "the model reads exactly what an engineer would see. Verbatim quoting "
+      "is a hard prompt rule."),
+    H2("Phase 3 tests — fake kubectl on PATH"),
+    P("tests/test_phase3.py places a stub kubectl (a shell script that "
+      "echoes its arguments) first on PATH, then asserts the EXACT command "
+      "lines the agent builds — and that invalid names are rejected without "
+      "kubectl ever running:"),
+    *code_text("""
+def test_pod_status_command(self):
+    result = execute_tool("k8s_pod_status", '{"pod": "web-1", "namespace": "prod"}')
+    self.assertIn("ARGS: get pod web-1 -n prod -o json --request-timeout=10", result)
+
+def test_only_read_only_verbs_are_possible(self):
+    # Walk every generated command line: the verb must be get or logs only.
+    invocations = [
+        ("k8s_pod_status", '{"pod": "x"}'),
+        ("k8s_pod_logs", '{"pod": "x"}'),
+        ("k8s_deployment_status", '{"deployment": "x"}'),
+    ]
+    for tool, args in invocations:
+        result = execute_tool(tool, args)
+        line = next(l for l in result.splitlines() if l.startswith("ARGS: "))
+        verb = line.split()[1]
+        self.assertIn(verb, {"get", "logs"}, f"{tool} used a non-read-only verb")
+
+def test_invalid_pod_name_rejected_without_invoking_kubectl(self):
+    for bad in ["--flag", "UPPER", "has space", "x" * 300, "..", "-n"]:
+        result = execute_tool("k8s_pod_status", '{"pod": "%s"}' % bad)
+        self.assertTrue(result.startswith("Tool error"), bad)
+        self.assertNotIn("ARGS:", result)  # kubectl never ran
+""", cap="tests/test_phase3.py — argv assertions and injection rejection."),
+    PageBreak(),
+]
+
+# ---- 6. phase 4 ------------------------------------------------------------ #
+story += [
+    H1("6. Phase 4 — The investigation loop"),
+    P("Phase 4 is the conceptual heart of the project: when a user reports a "
+      "concrete problem, the agent stops answering and starts "
+      "investigating. It opens a formal record, gathers evidence, tracks "
+      "hypotheses, and concludes with a structured report."),
+    H2("The flow"),
+    *bullets([
+        "The model opens a record with investigation_begin (one-line problem "
+        "+ 2–4 initial hypotheses, which become H1, H2, …).",
+        "It plans what it needs, then calls the read-only tools one "
+        "deliberate step at a time.",
+        "Every finding is recorded with investigation_record: evidence notes "
+        "(linked to a hypothesis when they bear on one) and verdicts "
+        "(supported / refuted / confirmed).",
+        "Each record call returns the live tracker — problem, status, "
+        "hypotheses with verdicts, evidence — so the model always knows "
+        "where it stands without inspecting all of history.",
+        "When evidence is sufficient the model calls investigation_conclude "
+        "with root cause, remediation recommendations (nothing is ever "
+        "executed), verification steps, and confidence — then ends its "
+        "answer with the structured report.",
+    ]),
+    P("The record lives in the application, not just the conversation: the "
+      "report is rendered deterministically from it, and the CLI exposes it "
+      "directly (/investigate, /investigation, /report, /endinvestigation). "
+      "The agent's own answer and /report are kept consistent by "
+      "construction: render_report() is the single report format."),
+    H2("The data model (agent/investigation.py)"),
+    P("A pure-data module — no model calls, no I/O — so it is fully "
+      "unit-testable. Hypotheses get sequential ids, verdicts are "
+      "validated against an enum, evidence can link to a hypothesis, and "
+      "conclusion requires root cause, remediation and verification."),
+    *code("agent/investigation.py"),
+    H2("The meta-tools (tools/investigation.py)"),
+    P("Three tools the model uses to maintain the record while it works. "
+      "These are the only stateful tools — and they mutate nothing outside "
+      "the agent's own memory. The module also holds the shared functions "
+      "the CLI reuses, so the model path and the human path are literally "
+      "the same code."),
+    *code("tools/investigation.py"),
+    H2("Phase 4 tests — loop-driven investigation"),
+    P("tests/test_phase4.py covers three layers: the pure data model, the "
+      "meta-tools lifecycle, and the full loop with a fake client — the "
+      "model opens an investigation, records a verdict, concludes, and the "
+      "tracked state must exist in the application afterwards:"),
+    *code_text("""
+def test_loop_tracks_investigation_and_concludes(self):
+    responses = [
+        self._tool_response("investigation_begin", {
+            "problem": "checkout pod is CrashLoopBackOff",
+            "initial_hypotheses": ["bad image", "exiting entrypoint"],
+        }),
+        self._tool_response("investigation_record", {
+            "kind": "verdict", "hypothesis_id": "H1", "status": "refuted",
+            "content": "image pulls cleanly",
+        }),
+        self._tool_response("investigation_conclude", {
+            "summary": "The entrypoint exits immediately.",
+            "root_cause": "The image command exits with code 1.",
+            "remediation": ["Fix the entrypoint", "add a liveness probe"],
+            "verification": ["rollout restart", "restartCount flat"],
+            "confidence": "high",
+        }),
+        self._text_response("Diagnosis complete."),
+    ]
+    ...
+    answer = agent.ask("Investigate: the checkout pod is CrashLoopBackOff.")
+    # State persisted outside the model: the tracker shows the verdict.
+    tracker = status_text()
+    self.assertIn("Status: concluded (confidence high)", tracker)
+    self.assertIn("- H1 [refuted] bad image", tracker)
+""", cap="tests/test_phase4.py — the model's plan becomes application state."),
+    PageBreak(),
+]
+
+# ---- 7. phase 5 ------------------------------------------------------------ #
+story += [
+    H1("7. Phase 5 — Multi-domain tooling"),
+    P("Phase 5 broadens the agent from Kubernetes-only to the wider DevOps "
+      "surface: Linux systemd services and journals, Docker containers, "
+      "Terraform state/plan, and git/GitHub pull requests — every tool "
+      "still read-only, still a fixed allowlisted argv template, now 26 "
+      "tools in total."),
+    H2("Tool catalogue with backing commands"),
+    table(["Domain", "Tool", "Backing command (read-only)"], [
+        ["Host", "system_info", "date/uname/uptime/df/free"],
+        ["Kubernetes", "k8s_pod_status", "kubectl get pod <pod> -n <ns> -o json"],
+        ["", "k8s_pod_logs", "kubectl logs <pod> -n <ns> --tail=<n>"],
+        ["", "k8s_deployment_status", "kubectl get deployment <dep> -n <ns> -o json"],
+        ["", "k8s_events", "kubectl get events -n <ns> --sort-by=.lastTimestamp -o wide "
+                           "[--field-selector involvedObject.name=<obj>]"],
+        ["", "k8s_nodes", "kubectl get nodes -o json"],
+        ["", "k8s_services", "kubectl get services -n <ns> -o json"],
+        ["Linux system", "sys_service_status", "systemctl status <unit> --no-pager"],
+        ["", "sys_service_logs", "journalctl -u <unit> --no-pager -n <n>"],
+        ["", "sys_open_ports", "ss -tlnp"],
+        ["", "sys_top_processes", "ps aux --sort=-%cpu --no-headers"],
+        ["Docker", "docker_ps", "docker ps -a"],
+        ["", "docker_inspect", "docker inspect <name>"],
+        ["", "docker_logs", "docker logs --tail <n> <name>"],
+        ["", "docker_stats", "docker stats --no-stream (flag pinned)"],
+        ["", "docker_images", "docker images"],
+        ["Terraform", "tf_show", "terraform show -no-color"],
+        ["", "tf_state_list", "terraform state list"],
+        ["", "tf_plan", "terraform plan -no-color -input=false (dry run)"],
+        ["git/GitHub", "git_repo_status", "git status --short --branch"],
+        ["", "git_log", "git log --oneline -n <n>"],
+        ["", "git_diff", "git diff --stat HEAD"],
+        ["", "gh_prs", "gh pr list --limit <n> --json number,title,state,..."],
+        ["Investigation", "investigation_begin / _record / _conclude",
+         "record only — memory, no external command"],
+    ], [2.6 * cm, 4.6 * cm, 9.3 * cm], mono_cols=(1, 2)),
+    H2("Domain modules (representative code)"),
+    P("Each module follows the same shape as Phase 2/3: a validated argv "
+      "template, a name validator where names exist, and register() calls. "
+      "The four new modules:"),
+    *code("tools/system.py"),
+    PageBreak(),
+    *code("tools/docker.py"),
+    PageBreak(),
+    *code("tools/terraform.py"),
+    PageBreak(),
+    *code("tools/git_ci.py"),
+    H2("Safety notes baked into Phase 5"),
+    *bullets([
+        "docker stats is ALWAYS --no-stream: without it the command follows "
+        "forever and would hang the turn.",
+        "terraform plan is a dry run — it computes the diff, mutates "
+        "nothing; -input=false keeps it from ever prompting. On a fresh "
+        "directory the model reports terraform's own error, honestly.",
+        "Terraform and git/gh tools operate on the current working directory "
+        "the agent was launched from — no path parameters, which keeps "
+        "traversal out.",
+        "Log tails are bounded integers, validated 1–500 (git log 1–100, "
+        "gh 1–50).",
+        "Any missing CLI / unreachable target returns the exact error — "
+        "nothing is invented.",
+    ]),
+    H2("Phase 5 tests — stub CLIs per domain"),
+    P("tests/test_phase5.py puts tiny stub binaries on PATH for the CLIs "
+      "each module uses and asserts the exact argv templates built — plus "
+      "that invalid names/arguments are rejected with a Tool error before "
+      "the binary is ever invoked. It ends with the full 26-tool registry "
+      "check."),
+    *code_text("""
+class FakeBins:
+    \"\"\"A temp dir of stub executables (echo "ARGS: $*") placed first on PATH.\"\"\"
+    def __init__(self, *names: str):
+        self._dir = tempfile.mkdtemp(prefix="p5-bins-")
+        self._prev_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{self._dir}:{self._prev_path}"
+        for name in names:
+            path = os.path.join(self._dir, name)
+            with open(path, "w") as fh:
+                fh.write('#!/bin/sh\\necho "ARGS: $*"\\n')
+            os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC)
+
+def test_docker_stats_always_no_stream(self):
+    # The one docker verb that would block forever without --no-stream.
+    result = self.run_tool("docker_stats", "{}")
+    self.assertTrue(result.startswith("$ docker stats --no-stream"), result)
+
+def test_plan_command_pinned_safe_flags(self):
+    # -input=false is what keeps plan from ever sitting on a prompt.
+    result = self.run_tool("tf_plan", "{}")
+    self.assertTrue(
+        result.startswith("$ terraform plan -no-color -input=false"), result
+    )
+
+def test_all_phase5_tools_registered(self):
+    names = {tool.name for tool in get_tools()}
+    self.assertEqual(len(names), 26)
+""", cap="tests/test_phase5.py — stubs, pinned flags, and the registry check."),
+    PageBreak(),
+]
+
+# ---- 8. phase 6 ------------------------------------------------------------ #
+story += [
+    H1("8. Phase 6 — Automation surface"),
+    P("Phase 6 turns the REPL-only agent into something a pipeline can use: "
+      "a one-shot CLI mode (exit-code driven, cron/CI-friendly) and a "
+      "structured JSON export of the investigation report. The repository "
+      "is also git-tracked with a clean .gitignore."),
+    H2("main.py — the CLI, both modes"),
+    P("REPL mode stays the interactive home. One-shot mode sends the problem "
+      "once, prints the agent's report, and exits 0 on success / 1 on "
+      "setup or API errors — so it drops straight into a pipeline. With "
+      "--json the stdout is one JSON document; if the model never opened an "
+      "investigation, --json fails with exit 1 rather than printing a "
+      "malformed report."),
+    *code("main.py"),
+    H2("render_report_json — the automation view"),
+    P("The JSON export lives beside the markdown renderer in "
+      "agent/investigation.py. It always returns the same shape whether or "
+      "not the investigation is concluded, and no model text is trusted — "
+      "everything is re-derived deterministically from the tracked record:"),
+    *code_text("""
+def render_report_json(self) -> dict:
+    \"\"\"Structured export of the investigation, for CI/automation tooling.\"\"\"
+    out: dict = {
+        "problem": self.problem,
+        "status": "concluded" if self.conclusion is not None else "in_progress",
+        "hypotheses": [
+            {"id": h.id, "statement": h.statement, "status": h.status,
+             "notes": list(h.notes)}
+            for h in self.hypotheses
+        ],
+        "evidence": [
+            {"id": e.id, "content": e.content, "hypothesis_id": e.hypothesis_id}
+            for e in self.evidence
+        ],
+    }
+    if self.conclusion is not None:
+        c = self.conclusion
+        out["conclusion"] = {
+            "summary": c.summary,
+            "root_cause": c.root_cause,
+            "remediation": list(c.remediation),
+            "verification": list(c.verification),
+            "confidence": c.confidence,
+        }
+    return out
+""", cap="agent/investigation.py — the same record, machine-readable."),
+    H2("Phase 6 tests — offline, no network"),
+    P("tests/test_automation.py verifies the JSON shape in progress and "
+      "concluded, that JSON and markdown agree, and drives run_one_shot "
+      "with a stubbed client:"),
+    *code_text("""
+def test_json_output_is_valid_and_structured(self):
+    inv_tools.start_investigation("checkout pod crash-loops")
+    inv_tools.conclude_investigation(
+        summary="image entrypoint exits 1",
+        root_cause="command exits immediately",
+        remediation="fix the entrypoint command",
+        verification="redeploy and watch restart count",
+        confidence="high",
+    )
+    code, out = self._run("report it as json", as_json=True)
+    self.assertEqual(code, 0)
+    data = json.loads(out)
+    self.assertEqual(data["status"], "concluded")
+    self.assertEqual(data["problem"], "checkout pod crash-loops")
+    self.assertEqual(data["conclusion"]["root_cause"], "command exits immediately")
+
+def test_json_flag_without_investigation_fails_loud(self):
+    code, out = self._run("hello", as_json=True)
+    self.assertEqual(code, 1)
+    self.assertNotIn("investigation complete.", out)
+
+def test_markdown_never_leaks_to_json_stdout(self):
+    ...
+    json.loads(out)  # the entire stdout must be one valid JSON document
+""", cap="tests/test_automation.py — the pipeline contract."),
+    PageBreak(),
+]
+
+# ---- 9. safety ------------------------------------------------------------- #
+story += [
+    H1("9. How read-only is enforced (defense in depth)"),
+    *bullets([
+        "The tool schemas only allow picking names/counts/namespaces from "
+        "validated arguments — there is no way to pass command text to any "
+        "CLI.",
+        "Every tool is a fixed argv template. No sh -c anywhere, so nothing "
+        "is ever parsed by a shell; flags the model might abuse (--no-stream "
+        "for docker stats, -input=false for terraform plan) are hard-coded "
+        "into the template and cannot be removed or added.",
+        "Only read-only verbs exist per domain — get/logs (kubectl), "
+        "status/-u/ss/ps (system), ps/inspect/logs/stats/images (docker), "
+        "show/state list/plan (terraform), status/log/diff/pr list (git/gh). "
+        "No delete, restart, edit, apply, scale, exec, run, rm, pull, push, "
+        "commit, reset, merge, destroy — by construction.",
+        "Names are validated per domain before reaching any CLI: Kubernetes "
+        "object names (DNS style), systemd unit names (no /, no leading "
+        "-), Docker names (no /), and no path parameters at all for "
+        "terraform/git/gh tools. This blocks flag and path injection.",
+        "The executor re-validates every argument. Never trust the model.",
+        "--request-timeout / subprocess timeouts bound slow or hanging "
+        "commands; logs are tail-bounded; output truncated at 8,000 "
+        "characters per result.",
+        "Unrecognized tools/arguments return “Tool error: ...” to "
+        "the model instead of executing.",
+        "The investigation tools mutate only the agent's in-memory record.",
+    ]),
+    H2("The system prompt (agent/prompts.py)"),
+    P("The prompt is kept in its own module so revisions never touch agent "
+      "logic and it can be unit-tested / versioned independently. Its core "
+      "rules: evidence before claims; distinguish facts, observations, "
+      "hypotheses and conclusions; investigate before concluding; ask when "
+      "information is missing; weight of destructive action (never "
+      "recommend irreversible actions without understanding evidence and "
+      "stating risk); be precise about uncertainty; never invent tool "
+      "output; report CLI errors exactly; never pretend to have cloud, "
+      "monitoring or CI access."),
+    PageBreak(),
+]
+
+# ---- 10. testing ----------------------------------------------------------- #
+story += [
+    H1("10. Testing"),
+    P("Everything is offline: tests make no network calls and need no API "
+      "key. Fake clients stand in for the model, and stub CLIs on PATH "
+      "prove the exact argv the application builds. Real cluster/container "
+      "verification is done live, separately."),
+    table(["File", "Covers"], [
+        ["tests/test_phase2.py", "Tool contract, registry, truncation, the "
+                                 "tool-use loop, allowlist rejection"],
+        ["tests/test_phase3.py", "kubectl argv templates, default namespace, "
+                                 "verb allowlist, name validation, fake-"
+                                 "kubectl loop test"],
+        ["tests/test_phase4.py", "Investigation data model, meta-tool "
+                                 "lifecycle and misuse, loop-driven "
+                                 "investigation"],
+        ["tests/test_phase5.py", "Argv templates for system/docker/tf/git "
+                                 "+ gh, name validation, pinned flags, "
+                                 "26-tool registry"],
+        ["tests/test_automation.py", "render_report_json shapes, agent "
+                                     "delegates, parse_args, one-shot exit "
+                                     "codes, JSON stdout purity"],
+    ], [5.4 * cm, 11.1 * cm], mono_cols=(0,)),
+    H2("Run the suite"),
+    *code_text("""
+cd ~/devops-ai-agent
+source .venv/bin/activate
+python -m unittest discover -s tests -v
+""", cap="Offline tests — no network, no API key needed."),
+]
+
+# ---- 11. usage ------------------------------------------------------------- #
+story += [
+    H1("11. Installation and usage"),
+    H2("Install"),
+    *code_text("""
+cd ~/devops-ai-agent
+python3 -m venv .venv
+.venv/bin/pip install --upgrade pip
+.venv/bin/pip install -r requirements.txt
+
+cp .env.example .env   # then edit: OPENROUTER_API_KEY=sk-or-...
+""", cap="Setup — Python 3.10+, plus the CLIs of the domains you use."),
+    P("Recommended CLIs, by domain: kubectl (configured context) for "
+      "Kubernetes; systemctl/journalctl/ss/ps for Linux system; docker "
+      "(daemon running); terraform (initialized directory); git; gh "
+      "(authenticated, for PRs). Each tool reports its exact error if the "
+      "CLI is missing, so the agent runs with whatever subset you have."),
+    H2("Run interactively (REPL)"),
+    *code_text("""
+.venv/bin/python main.py
+
+# slash commands (handled locally, never reach the model):
+#   /investigate <problem>   open a formal investigation
+#   /investigation           show the live tracked state
+#   /report                  show the canonical report (once concluded)
+#   /endinvestigation        clear the record (memory only)
+""", cap="REPL mode."),
+    H2("Run one-shot (cron / CI / scripts)"),
+    *code_text("""
+.venv/bin/python main.py "why is api-5d6f crash-looping?"
+.venv/bin/python main.py --json "why is api-5d6f crash-looping?"   # structured report
+.venv/bin/python main.py /report                                   # slash commands work one-shot
+""", cap="One-shot mode — exit 0 on success, 1 on setup/API errors."),
+    P("With --json the stdout is one JSON document: problem, status, "
+      "hypotheses, evidence, and — once concluded — conclusion with "
+      "root_cause, remediation, verification, confidence. A pipeline can "
+      "act on the verdict instead of parsing markdown."),
+    H2("Example session"),
+    *code_text("""
+DevOps AI Agent (Phase 6 — one-shot CLI, JSON reports, git-tracked)
+Model:   z-ai/glm-5.3
+Backend: https://openrouter.ai/api/v1
+Tools:   docker_images, docker_inspect, docker_logs, docker_ps, ...
+
+You: The checkout service container keeps exiting in Docker. Investigate.
+Agent: (docker_ps -> docker_inspect -> docker_logs, tracks hypotheses, and
+       ends with the structured report: the crash command, exit code, and
+       the remediation recommendation)
+
+You: /report
+Agent: # Investigation report ... (the canonical record, rendered from state)
+
+You: exit
+""", cap="A Docker investigation, start to finish."),
+    PageBreak(),
+]
+
+# ---- 12. limitations & roadmap ---------------------------------------------- #
+story += [
+    H1("12. Current limitations"),
+    *bullets([
+        "Each domain needs its CLI installed and reachable; missing CLIs, "
+        "unauthenticated gh, a dead docker daemon, an uninitialized "
+        "terraform directory or an unreachable cluster return the exact "
+        "error honestly — but a tool can't produce data without its backend.",
+        "terraform/git/gh tools are working-directory scoped (no path "
+        "arguments by design — keeps traversal out). To investigate another "
+        "repo/module, launch the agent there.",
+        "Cloud provider CLIs (AWS/GCP/Azure), monitoring/log aggregation, "
+        "and generic CI/CD platforms are not integrated yet — the agent "
+        "says so rather than pretending.",
+        "No kubectl top (resource usage) yet — minikube lacks metrics-server "
+        "by default, so it would fail honestly on this cluster.",
+        "The model can only select from the registered tools; it can never "
+        "run an arbitrary or mutating verb — by construction.",
+        "Raw CLI output goes to the model (Python does not re-parse), "
+        "truncated at 8,000 characters per result.",
+        "Short-term memory only: history and the investigation record live "
+        "in the process and are lost when the CLI exits.",
+        "Hypothesis tracking is model-driven: the record is what the model "
+        "chose to record through the investigation tools.",
+        "No streaming, no retries/backoff yet.",
+        "Read-only is enforced by construction today; mutating capabilities "
+        "will only be added behind an explicit human-approval gate, much "
+        "later.",
+    ]),
+    H1("13. Roadmap"),
+    table(["Phase", "Scope"], [
+        ["Later", "Cloud, monitoring/logging and CI/CD-platform tooling; "
+                  "streaming; persistence (the investigation record "
+                  "survives CLI exits); human-approval gate before any "
+                  "mutating action is ever allowed."],
+        ["Phase 5 pending", "kubectl top (needs metrics-server), kubectl get "
+                            "hpa/pvc, node resource usage, a kubectl "
+                            "context selector."],
+    ], [3.4 * cm, 13.1 * cm]),
+    H2("Repository hygiene"),
+    P("Phase 6 also git-tracked the project. .gitignore keeps secrets and "
+      "the venv out:"),
+    *code(".gitignore", "config"),
+    Spacer(1, 0.4 * cm),
+    Paragraph("Documentation generated from the repository source on " + TODAY
+              + " — regenerate any time by re-running the generator against "
+              "the latest code.", S["cap"]),
+]
+
+# --------------------------------------------------------------------------- #
+# Build
+# --------------------------------------------------------------------------- #
+doc = Doc(OUT, pagesize=A4,
+          leftMargin=2 * cm, rightMargin=2 * cm,
+          topMargin=2 * cm, bottomMargin=2 * cm,
+          title="DevOps AI Agent — Project Documentation",
+          author="DevOpsAbhii")
+frame = Frame(doc.leftMargin, doc.bottomMargin,
+              doc.width, doc.height, id="main")
+doc.addPageTemplates([PageTemplate(id="all", frames=[frame], onPage=on_page)])
+doc.multiBuild(story)
+print("WROTE", OUT)
