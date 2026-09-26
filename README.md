@@ -30,6 +30,11 @@ vulnerability scanning, Helm releases (list/status/history), Argo CD
 Every phase still built from scratch — no LangChain, LangGraph,
 AutoGen, CrewAI, or MCP.
 
+> **Want to use this in your own project?** See [INTEGRATION.md](INTEGRATION.md)
+> for the three integration levels: drive it as a CLI from cron/CI (exit
+> codes + `--json`), embed it as a Python library, or extend it with your
+> own read-only tools.
+
 ---
 
 ## 1. What this project is
