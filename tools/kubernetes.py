@@ -264,9 +264,201 @@ K8S_SERVICES = Tool(
     executor=_k8s_services,
 )
 
+# --- Phase 8: cluster depth — pod listing, resource usage, autoscaling,
+# storage, and contexts. Same contract: fixed argv, validated names, get/top
+# verbs only (never `config use-context`, which would mutate kubeconfig). ----
+
+
+def _k8s_pods(args: dict) -> str:
+    namespace = _namespace(args)
+    return read_command_output(
+        ("kubectl", "get", "pods", "-n", namespace, "-o", "wide",
+         "--request-timeout=10"),
+        timeout=_TIMEOUT_S,
+    )
+
+
+def _k8s_top_pods(args: dict) -> str:
+    namespace = _namespace(args)
+    argv = ["kubectl", "top", "pods", "-n", namespace]
+    sort_by = args.get("sort_by")
+    if sort_by is not None:
+        if sort_by not in ("cpu", "memory"):
+            raise ToolError("sort_by must be 'cpu' or 'memory'")
+        argv.append("--sort-by=" + sort_by)
+    argv.append("--request-timeout=10")
+    return read_command_output(tuple(argv), timeout=_TIMEOUT_S)
+
+
+def _k8s_top_nodes(args: dict) -> str:
+    return read_command_output(
+        ("kubectl", "top", "nodes", "--request-timeout=10"),
+        timeout=_TIMEOUT_S,
+    )
+
+
+def _k8s_hpa(args: dict) -> str:
+    namespace = _namespace(args)
+    name = args.get("name")
+    if name is not None:
+        _check_name(name, "hpa")
+        argv = ("kubectl", "get", "hpa", name, "-n", namespace, "-o", "json",
+                "--request-timeout=10")
+    else:
+        argv = ("kubectl", "get", "hpa", "-n", namespace, "-o", "json",
+                "--request-timeout=10")
+    return read_command_output(argv, timeout=_TIMEOUT_S)
+
+
+def _k8s_pvc(args: dict) -> str:
+    namespace = _namespace(args)
+    name = args.get("name")
+    if name is not None:
+        _check_name(name, "pvc")
+        argv = ("kubectl", "get", "pvc", name, "-n", namespace, "-o", "json",
+                "--request-timeout=10")
+    else:
+        argv = ("kubectl", "get", "pvc", "-n", namespace, "-o", "json",
+                "--request-timeout=10")
+    return read_command_output(argv, timeout=_TIMEOUT_S)
+
+
+def _k8s_contexts(args: dict) -> str:
+    # Local kubeconfig read — no cluster API, so no request timeout needed.
+    return read_command_output(("kubectl", "config", "get-contexts"))
+
+
+K8S_PODS = Tool(
+    name="k8s_pods",
+    description=(
+        "List Pods in a namespace (kubectl get pods -o wide): name, ready "
+        "containers, status, restarts, age, and the node each runs on. The "
+        "first tool for 'what is running / what looks unhealthy' in a "
+        "namespace — follow up on interesting pods with k8s_pod_status. "
+        "Read-only."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "namespace": {
+                "type": "string",
+                "description": "Namespace to list (default: \"default\").",
+            },
+        },
+        "additionalProperties": False,
+    },
+    executor=_k8s_pods,
+)
+
+K8S_TOP_PODS = Tool(
+    name="k8s_top_pods",
+    description=(
+        "Resource usage of Pods in a namespace (kubectl top pods): CPU and "
+        "memory per pod. Use for 'which pod burns CPU/RAM', capacity checks. "
+        "Requires metrics-server in the cluster; if absent, kubectl's exact "
+        "error is returned. Read-only."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "namespace": {
+                "type": "string",
+                "description": "Namespace to measure (default: \"default\").",
+            },
+            "sort_by": {
+                "type": "string",
+                "enum": ["cpu", "memory"],
+                "description": "Optional sort column.",
+            },
+        },
+        "additionalProperties": False,
+    },
+    executor=_k8s_top_pods,
+)
+
+K8S_TOP_NODES = Tool(
+    name="k8s_top_nodes",
+    description=(
+        "Resource usage of all cluster nodes (kubectl top nodes): CPU and "
+        "memory per node, for node-level capacity and pressure questions. "
+        "Requires metrics-server; if absent, kubectl's exact error is "
+        "returned. Read-only."
+    ),
+    parameters={"type": "object", "properties": {}, "additionalProperties": False},
+    executor=_k8s_top_nodes,
+)
+
+K8S_HPA = Tool(
+    name="k8s_hpa",
+    description=(
+        "Fetch HorizontalPodAutoscalers in a namespace as JSON (kubectl get "
+        "hpa): current/target utilization, min/max replicas, and the scale "
+        "target. Use for autoscaling problems — a workload pinned at max "
+        "replicas or not scaling at all. Pass 'name' for one HPA. Read-only."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "Optional HPA name (omit to list all).",
+            },
+            "namespace": {
+                "type": "string",
+                "description": "Namespace (default: \"default\").",
+            },
+        },
+        "additionalProperties": False,
+    },
+    executor=_k8s_hpa,
+)
+
+K8S_PVC = Tool(
+    name="k8s_pvc",
+    description=(
+        "Fetch PersistentVolumeClaims in a namespace as JSON (kubectl get "
+        "pvc): phase (Bound/Pending/Lost), storage class, capacity, volume "
+        "name. Use for 'why is my volume Pending' / storage debugging. Pass "
+        "'name' for one PVC. Read-only."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "Optional PVC name (omit to list all).",
+            },
+            "namespace": {
+                "type": "string",
+                "description": "Namespace (default: \"default\").",
+            },
+        },
+        "additionalProperties": False,
+    },
+    executor=_k8s_pvc,
+)
+
+K8S_CONTEXTS = Tool(
+    name="k8s_contexts",
+    description=(
+        "List the kubeconfig contexts on this host (kubectl config "
+        "get-contexts), with the current context marked. Use to see WHICH "
+        "cluster the other k8s tools are pointed at. Listing only — the "
+        "agent can never switch contexts. Read-only."
+    ),
+    parameters={"type": "object", "properties": {}, "additionalProperties": False},
+    executor=_k8s_contexts,
+)
+
 register(K8S_POD_STATUS)
 register(K8S_POD_LOGS)
 register(K8S_DEPLOYMENT_STATUS)
 register(K8S_EVENTS)
 register(K8S_NODES)
 register(K8S_SERVICES)
+register(K8S_PODS)
+register(K8S_TOP_PODS)
+register(K8S_TOP_NODES)
+register(K8S_HPA)
+register(K8S_PVC)
+register(K8S_CONTEXTS)

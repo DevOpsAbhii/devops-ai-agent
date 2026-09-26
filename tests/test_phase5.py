@@ -235,7 +235,10 @@ class RegistryTests(Phase5TestCase):
         from tools.registry import get_tools
 
         names = {tool.name for tool in get_tools()}
-        expected = {
+        # Phase 8 added 21 tools on top of Phase 5's 26 (full set asserted
+        # in tests/test_phase2.py); here we check the Phase 5 tools plus the
+        # total count the registry must hold after Phase 8.
+        phase5_tools = {
             "system_info",
             "k8s_pod_status", "k8s_pod_logs", "k8s_deployment_status",
             "k8s_events", "k8s_nodes", "k8s_services",
@@ -247,8 +250,8 @@ class RegistryTests(Phase5TestCase):
             "git_repo_status", "git_log", "git_diff", "gh_prs",
             "investigation_begin", "investigation_record", "investigation_conclude",
         }
-        self.assertEqual(names, expected)
-        self.assertEqual(len(names), 26)
+        self.assertLessEqual(phase5_tools, names)
+        self.assertEqual(len(names), 47)
 
 
 if __name__ == "__main__":

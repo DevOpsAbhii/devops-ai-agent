@@ -32,10 +32,13 @@ from openai import OpenAI
 from agent.prompts import SYSTEM_PROMPT
 from agent.store import InvestigationStore
 from tools import (  # noqa: F401 — side effect: each module registers its tools
+    ansible,
+    cloud,
     docker,
     git_ci,
     investigation,
     kubernetes,
+    monitoring,
     preflight,
     system,
     terraform,

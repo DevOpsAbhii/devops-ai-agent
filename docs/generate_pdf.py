@@ -208,8 +208,8 @@ story += [
         ["Project", "devops-ai-agent  (~/devops-ai-agent)"],
         ["Model", "GLM 5.3  (z-ai/glm-5.3) via OpenRouter"],
         ["Language", "Python 3.10+ (stdlib tools + openai SDK + python-dotenv)"],
-        ["Phases complete", "1 – 7  (Phase 7: persistent investigations)"],
-        ["Tools", "26 real, read-only tools across 6 domains"],
+        ["Phases complete", "1 – 8  (Phase 8: tool expansion — 47 read-only tools)"],
+        ["Tools", "47 real, read-only tools across 10 domains"],
         ["Generated", TODAY],
     ], [4.2 * cm, 12.3 * cm]),
     Spacer(1, 2.2 * cm),
@@ -241,13 +241,14 @@ story += [
       "flows, how tool selection + execution + evidence feedback work — "
       "instead of depending on a framework for it. No LangChain, LangGraph, "
       "AutoGen, CrewAI or MCP anywhere."),
-    H2("What the agent does today (Phases 1–6)"),
+    H2("What the agent does today (Phases 1–8)"),
     *bullets([
         "Holds a conversation with GLM 5.3 through OpenRouter's "
         "OpenAI-compatible endpoint.",
-        "Has 26 real, read-only tools across six domains: host facts, "
-        "Kubernetes (6), Linux system (4), Docker (5), Terraform (3), "
-        "git/GitHub (4), plus the 3 investigation meta-tools.",
+        "Has 47 real, read-only tools across ten domains: host facts, "
+        "Kubernetes (12), Linux system (4), Docker (8), Terraform (3), "
+        "git/GitHub + Actions (7), cloud identity (4), monitoring/logging "
+        "(3), Ansible (2), plus the 3 investigation meta-tools.",
         "Runs a tool-use loop: when the model decides a question needs "
         "evidence, it requests the tool, the application executes it locally, "
         "and the real output is fed back to the model, which then answers "
@@ -291,6 +292,11 @@ story += [
         ["7", "Persistence: the investigation record survives CLI exits — "
               "auto-saved on every mutation, REPL auto-resume, "
               "/investigations, one-shot --resume/--out/--store-dir.", "Done"],
+        ["8", "Tool expansion: 21 more read-only tools (26 → 47) — k8s depth "
+              "(pods/top/hpa/pvc/contexts), Docker depth (networks/volumes/"
+              "disk usage), GitHub Actions (runs/run view/workflows), cloud "
+              "identity (AWS/GCP/Azure), monitoring (Prometheus/Loki/Grafana, "
+              "env-configured endpoints), Ansible listing.", "Done"],
     ], [1.6 * cm, 11.4 * cm, 1.5 * cm]),
     PageBreak(),
 ]
@@ -344,12 +350,21 @@ GLM 5.3 (z-ai/glm-5.3)
                               "declared and executed here"],
         ["tools/preflight.py", "system_info — host facts (allowlisted "
                                "read-only commands)"],
-        ["tools/kubernetes.py", "6 kubectl tools: pod status/logs, deployment, "
-                                "events, nodes, services"],
+        ["tools/kubernetes.py", "12 kubectl tools: pods, pod status/logs, "
+                                "deployments, events, nodes, top (cpu/mem), "
+                                "hpa, pvc, services, contexts"],
         ["tools/system.py", "systemd/journal/ss/ps tools"],
-        ["tools/docker.py", "docker ps/inspect/logs/stats/images"],
+        ["tools/docker.py", "docker ps/inspect/logs/stats/images + "
+                            "networks/volumes/disk usage"],
         ["tools/terraform.py", "tf_show / tf_state_list / tf_plan"],
-        ["tools/git_ci.py", "git status/log/diff + gh_prs"],
+        ["tools/git_ci.py", "git status/log/diff + gh_prs + gh Actions "
+                            "(runs / run view / workflows)"],
+        ["tools/cloud.py", "cloud identity: aws_identity, gcloud_identity, "
+                           "az_account, az_groups (Phase 8)"],
+        ["tools/monitoring.py", "prom_query, loki_query, grafana_health — "
+                                "endpoints from env config only (Phase 8)"],
+        ["tools/ansible.py", "ansible_inventory, ansible_playbook_tasks — "
+                             "listing modes only (Phase 8)"],
         ["tools/investigation.py", "investigation_begin / _record / _conclude "
                                    "meta-tools"],
         ["tests/test_phase2.py", "Offline suite: contract, safety, loop"],
@@ -364,6 +379,9 @@ GLM 5.3 (z-ai/glm-5.3)
         ["tests/test_phase7.py", "Offline suite: round-trip serialization, "
                                  "store files, auto-save, resume, CLI flags "
                                  "(Phase 7)"],
+        ["tests/test_phase8.py", "Offline suite: argv templates + validation "
+                                 "for the 21 Phase 8 tools (fake CLIs, "
+                                 "env-based monitoring)"],
     ], [5.4 * cm, 11.1 * cm], mono_cols=(0,)),
     PageBreak(),
 ]
@@ -943,9 +961,132 @@ def test_start_and_record_save_with_note(self):
     PageBreak(),
 ]
 
-# ---- 10. safety ------------------------------------------------------------- #
+# ---- 10. phase 8 ------------------------------------------------------------ #
 story += [
-    H1("10. How read-only is enforced (defense in depth)"),
+    H1("10. Phase 8 — Tool expansion"),
+    P("Phase 8 is pure additive breadth: 21 new read-only tools take the "
+      "registry from 26 to 47, without changing the safety model by one "
+      "iota. Kubernetes gets depth (pod listing, kubectl top resource usage, "
+      "HPAs, PVCs, context listing), Docker gets depth (networks, volumes, "
+      "disk usage), GitHub Actions arrives via gh (runs, run jobs, "
+      "workflows), cloud identity lands for AWS/GCP/Azure, monitoring and "
+      "logging query Prometheus, Loki and Grafana, and Ansible gets "
+      "inventory/playbook listing. One deliberate safety extension: the "
+      "monitoring module takes a URL — so its endpoint can never come from "
+      "the model (see below)."),
+    H2("The 21 new tools with backing commands"),
+    table(["Domain", "Tool", "Backing command (read-only)"], [
+        ["K8s depth", "k8s_pods", "kubectl get pods -n <ns> -o wide"],
+        ["", "k8s_top_pods", "kubectl top pods -n <ns> [--sort-by=cpu|memory]"],
+        ["", "k8s_top_nodes", "kubectl top nodes"],
+        ["", "k8s_hpa", "kubectl get hpa [<name>] -n <ns> -o json"],
+        ["", "k8s_pvc", "kubectl get pvc [<name>] -n <ns> -o json"],
+        ["", "k8s_contexts", "kubectl config get-contexts (listing only — "
+                             "never use-context)"],
+        ["Docker", "docker_networks", "docker network ls"],
+        ["", "docker_volumes", "docker volume ls"],
+        ["", "docker_disk_usage", "docker system df"],
+        ["GitHub Actions", "gh_runs", "gh run list --limit <n> --json "
+                                      "databaseId,displayTitle,status,..."],
+        ["", "gh_run_view", "gh run view <id> --json status,conclusion,jobs "
+                            "(id digits-only)"],
+        ["", "gh_workflows", "gh workflow list --limit <n> --json id,name,state"],
+        ["Cloud", "aws_identity", "aws sts get-caller-identity --output json"],
+        ["", "gcloud_identity", "gcloud config list --format=json"],
+        ["", "az_account", "az account show"],
+        ["", "az_groups", "az group list"],
+        ["Monitoring", "prom_query", "curl <PROMETHEUS_URL>/api/v1/query?"
+                                     "query=<urlencoded PromQL>"],
+        ["", "loki_query", "curl <LOKI_URL>/loki/api/v1/query?query=<urlencoded "
+                           "LogQL>&limit=<n>"],
+        ["", "grafana_health", "curl <GRAFANA_URL>/api/health"],
+        ["Ansible", "ansible_inventory", "ansible-inventory [--inventory <src>] --list"],
+        ["", "ansible_playbook_tasks", "ansible-playbook --list-tasks "
+                                       "--list-hosts <playbook>"],
+    ], [3.0 * cm, 4.4 * cm, 9.1 * cm], mono_cols=(1, 2)),
+    H2("New modules (representative code)"),
+    P("tools/cloud.py is the simplest module in the project: four tools, "
+      "zero arguments — identity/account level only, so nothing can be "
+      "injected and no region-scoped resource sweep is possible yet."),
+    *code("tools/cloud.py"),
+    PageBreak(),
+    P("tools/monitoring.py is the one deliberate safety extension of the "
+      "phase: curl takes a URL, so the endpoint is read from environment "
+      "configuration only (PROMETHEUS_URL / LOKI_URL / GRAFANA_URL). The "
+      "model supplies query text, which is percent-encoded; the curl argv is "
+      "pinned (--proto =https,http blocks file://; GET only; no shell)."),
+    *code("tools/monitoring.py"),
+    PageBreak(),
+    P("tools/ansible.py takes path-shaped arguments, so they are validated "
+      "as relative path fragments: no leading / or -, no .. segment, no "
+      "slash. Both tools are pure listing modes — they connect to no "
+      "managed host and change nothing."),
+    *code("tools/ansible.py"),
+    H2("k8s and gh depth — same argv-template pattern"),
+    P("The six kubectl tools reuse the module's _check_name/_namespace "
+      "validators and the pinned --request-timeout; k8s_contexts reads the "
+      "local kubeconfig only and can never switch contexts. gh run ids are "
+      "digits-only validated, which blocks flag injection entirely:"),
+    *code_text("""
+def _checked_run_id(args: dict) -> str:
+    run_id = args.get("run_id")
+    if (
+        not isinstance(run_id, str)
+        or not run_id.isdigit()
+        or not 1 <= len(run_id) <= 20
+    ):
+        raise ToolError("run_id must be the numeric GitHub Actions run id")
+    return run_id
+
+def _gh_run_view(args: dict) -> str:
+    run_id = _checked_run_id(args)
+    return read_command_output(
+        ("gh", "run", "view", run_id, "--json", "status,conclusion,jobs"),
+        timeout=_TIMEOUT_S,
+    )
+""", cap="tools/git_ci.py — a digits-only id is the whole validation story."),
+    *code_text("""
+def _k8s_contexts(args: dict) -> str:
+    # Local kubeconfig read — no cluster API, so no request timeout needed.
+    return read_command_output(("kubectl", "config", "get-contexts"))
+""", cap="tools/kubernetes.py — listing contexts, never switching them."),
+    H2("Phase 8 tests — stubs, env-configured monitoring"),
+    P("tests/test_phase8.py follows the same stub-binary strategy and adds "
+      "one new dimension: environment configuration. The monitoring tests "
+      "prove that an unset endpoint is an honest ToolError naming the "
+      "variable, that a file:// endpoint is refused without curl ever "
+      "running, and that the PromQL text lands percent-encoded in the "
+      "pinned curl argv:"),
+    *code_text("""
+def test_unset_endpoint_is_an_honest_error(self):
+    for tool, var in (
+        ("prom_query", "PROMETHEUS_URL"),
+        ("loki_query", "LOKI_URL"),
+        ("grafana_health", "GRAFANA_URL"),
+    ):
+        result = self.run_tool(tool, '{"query": "up"}')
+        self.assertTrue(result.startswith("Tool error"), (tool, result))
+        self.assertIn(var, result)
+        self.assertNotIn("ARGS:", result)  # curl was never invoked
+
+def test_unsafe_endpoint_scheme_rejected(self):
+    os.environ["PROMETHEUS_URL"] = "file:///etc/passwd"
+    result = self.run_tool("prom_query", '{"query": "up"}')
+    self.assertTrue(result.startswith("Tool error"), result)
+    self.assertNotIn("ARGS:", result)
+
+def test_gh_run_id_must_be_digits(self):
+    for bad in ("-1", "abc", "12; rm -rf /", "--jobs", "1 2", "x" * 21, ""):
+        result = self.run_tool("gh_run_view", f'{{"run_id": "{bad}"}}')
+        self.assertTrue(result.startswith("Tool error"), (bad, result))
+        self.assertNotIn("ARGS:", result)  # gh was never invoked
+""", cap="tests/test_phase8.py — endpoints from env, ids digits-only."),
+    PageBreak(),
+]
+
+# ---- 11. safety ------------------------------------------------------------- #
+story += [
+    H1("11. How read-only is enforced (defense in depth)"),
     *bullets([
         "The tool schemas only allow picking names/counts/namespaces from "
         "validated arguments — there is no way to pass command text to any "
@@ -954,15 +1095,22 @@ story += [
         "is ever parsed by a shell; flags the model might abuse (--no-stream "
         "for docker stats, -input=false for terraform plan) are hard-coded "
         "into the template and cannot be removed or added.",
-        "Only read-only verbs exist per domain — get/logs (kubectl), "
-        "status/-u/ss/ps (system), ps/inspect/logs/stats/images (docker), "
-        "show/state list/plan (terraform), status/log/diff/pr list (git/gh). "
-        "No delete, restart, edit, apply, scale, exec, run, rm, pull, push, "
-        "commit, reset, merge, destroy — by construction.",
+        "Only read-only verbs exist per domain — get/logs/top and config "
+        "get-contexts (kubectl), status/-u/ss/ps (system), ps/inspect/logs/"
+        "stats/images/network ls/volume ls/system df (docker), show/state "
+        "list/plan (terraform), status/log/diff/pr list/run list/run view/"
+        "workflow list (git/gh), --list/--list-tasks (ansible), GET-only "
+        "curl with a pinned argv (monitoring). No delete, restart, edit, "
+        "apply, scale, exec, run, rm, pull, push, commit, reset, merge, "
+        "use-context, playbook-run, destroy — by construction.",
         "Names are validated per domain before reaching any CLI: Kubernetes "
         "object names (DNS style), systemd unit names (no /, no leading "
-        "-), Docker names (no /), and no path parameters at all for "
-        "terraform/git/gh tools. This blocks flag and path injection.",
+        "-), Docker names (no /), GitHub run ids (digits only), Ansible "
+        "sources (relative paths, no ..), and no path parameters at all "
+        "for terraform/git/gh tools. This blocks flag and path injection.",
+        "The monitoring endpoints never come from the model: they are read "
+        "from PROMETHEUS_URL / LOKI_URL / GRAFANA_URL, must be http(s), and "
+        "the query text is percent-encoded into the URL before curl runs.",
         "The executor re-validates every argument. Never trust the model.",
         "--request-timeout / subprocess timeouts bound slow or hanging "
         "commands; logs are tail-bounded; output truncated at 8,000 "
@@ -979,14 +1127,14 @@ story += [
       "information is missing; weight of destructive action (never "
       "recommend irreversible actions without understanding evidence and "
       "stating risk); be precise about uncertainty; never invent tool "
-      "output; report CLI errors exactly; never pretend to have cloud, "
-      "monitoring or CI access."),
+      "output; report CLI errors exactly; treat monitoring endpoints as "
+      "operator-configured (name the missing env var, never invent a URL)."),
     PageBreak(),
 ]
 
 # ---- 11. testing ----------------------------------------------------------- #
 story += [
-    H1("11. Testing"),
+    H1("12. Testing"),
     P("Everything is offline: tests make no network calls and need no API "
       "key. Fake clients stand in for the model, and stub CLIs on PATH "
       "prove the exact argv the application builds. Real cluster/container "
@@ -1001,8 +1149,7 @@ story += [
                                  "lifecycle and misuse, loop-driven "
                                  "investigation"],
         ["tests/test_phase5.py", "Argv templates for system/docker/tf/git "
-                                 "+ gh, name validation, pinned flags, "
-                                 "26-tool registry"],
+                                 "+ gh, name validation, pinned flags"],
         ["tests/test_automation.py", "render_report_json shapes, agent "
                                      "delegates, parse_args, one-shot exit "
                                      "codes, JSON stdout purity"],
@@ -1010,18 +1157,23 @@ story += [
                                  "and resume, chokepoint auto-save, CLI "
                                  "flags (--store-dir/--resume/--out), "
                                  "/investigations"],
+        ["tests/test_phase8.py", "Argv templates for the 21 new tools, "
+                                 "k8s top/hpa/pvc validation, digits-only "
+                                 "gh run ids, env-configured monitoring "
+                                 "endpoints, ansible path validation"],
     ], [5.4 * cm, 11.1 * cm], mono_cols=(0,)),
     H2("Run the suite"),
     *code_text("""
 cd ~/devops-ai-agent
 source .venv/bin/activate
 python -m unittest discover -s tests -v
+# after Phase 8: 145 tests, OK (1 skipped as root)
 """, cap="Offline tests — no network, no API key needed."),
 ]
 
 # ---- 12. usage ------------------------------------------------------------- #
 story += [
-    H1("12. Installation and usage"),
+    H1("13. Installation and usage"),
     H2("Install"),
     *code_text("""
 cd ~/devops-ai-agent
@@ -1031,11 +1183,14 @@ python3 -m venv .venv
 
 cp .env.example .env   # then edit: OPENROUTER_API_KEY=sk-or-...
 """, cap="Setup — Python 3.10+, plus the CLIs of the domains you use."),
-    P("Recommended CLIs, by domain: kubectl (configured context) for "
-      "Kubernetes; systemctl/journalctl/ss/ps for Linux system; docker "
-      "(daemon running); terraform (initialized directory); git; gh "
-      "(authenticated, for PRs). Each tool reports its exact error if the "
-      "CLI is missing, so the agent runs with whatever subset you have."),
+    P("Recommended CLIs, by domain: kubectl (configured context; "
+      "metrics-server for top) for Kubernetes; systemctl/journalctl/ss/ps "
+      "for Linux system; docker (daemon running); terraform (initialized "
+      "directory); git; gh (authenticated, for PRs and Actions); aws / "
+      "gcloud / az (only the ones you use); curl plus endpoint env vars for "
+      "monitoring; ansible-inventory / ansible-playbook for Ansible. Each "
+      "tool reports its exact error if the CLI is missing, so the agent "
+      "runs with whatever subset you have."),
     H2("Run interactively (REPL)"),
     *code_text("""
 .venv/bin/python main.py
@@ -1064,6 +1219,9 @@ cp .env.example .env   # then edit: OPENROUTER_API_KEY=sk-or-...
         "One-shot: --resume continues a prior run; --out writes the JSON "
         "report to an exact path; --store-dir overrides the directory.",
         "AGENT_STORE_DIR env var overrides the default location globally.",
+        "Monitoring endpoints are env-configured: PROMETHEUS_URL / "
+        "LOKI_URL / GRAFANA_URL enable prom_query / loki_query / "
+        "grafana_health; unset means an honest error naming the variable.",
         "A broken store degrades to a warning in the tool result — it never "
         "interrupts an investigation.",
     ]),
@@ -1074,7 +1232,7 @@ cp .env.example .env   # then edit: OPENROUTER_API_KEY=sk-or-...
       "act on the verdict instead of parsing markdown."),
     H2("Example session"),
     *code_text("""
-DevOps AI Agent (Phase 7 — persistent investigations)
+DevOps AI Agent (Phase 8 — 47 read-only tools, persistent investigations)
 Model:   z-ai/glm-5.3
 Backend: https://openrouter.ai/api/v1
 Store:   /home/you/.devops-ai-agent/investigations
@@ -1095,20 +1253,24 @@ You: exit
 
 # ---- 13. limitations & roadmap ---------------------------------------------- #
 story += [
-    H1("13. Current limitations"),
+    H1("14. Current limitations"),
     *bullets([
         "Each domain needs its CLI installed and reachable; missing CLIs, "
         "unauthenticated gh, a dead docker daemon, an uninitialized "
         "terraform directory or an unreachable cluster return the exact "
         "error honestly — but a tool can't produce data without its backend.",
-        "terraform/git/gh tools are working-directory scoped (no path "
-        "arguments by design — keeps traversal out). To investigate another "
-        "repo/module, launch the agent there.",
-        "Cloud provider CLIs (AWS/GCP/Azure), monitoring/log aggregation, "
-        "and generic CI/CD platforms are not integrated yet — the agent "
-        "says so rather than pretending.",
-        "No kubectl top (resource usage) yet — minikube lacks metrics-server "
-        "by default, so it would fail honestly on this cluster.",
+        "terraform/git/gh/ansible tools are working-directory scoped (no "
+        "path arguments by design — keeps traversal out). To investigate "
+        "another repo/module, launch the agent there.",
+        "Monitoring endpoints are environment-configured by design: without "
+        "PROMETHEUS_URL / LOKI_URL / GRAFANA_URL set, those tools fail with "
+        "a message naming the variable — the agent never invents a URL.",
+        "kubectl top needs metrics-server; clusters without it return "
+        "kubectl's exact error — honest, but no usage data.",
+        "Cloud tools are identity-level only: which account/principal/"
+        "subscription am I looking at — region-scoped resource sweeps "
+        "(ec2 describe-*, compute instances list, ...) are not integrated "
+        "yet.",
         "The model can only select from the registered tools; it can never "
         "run an arbitrary or mutating verb — by construction.",
         "Raw CLI output goes to the model (Python does not re-parse), "
@@ -1123,15 +1285,17 @@ story += [
         "will only be added behind an explicit human-approval gate, much "
         "later.",
     ]),
-    H1("14. Roadmap"),
+    H1("15. Roadmap"),
     table(["Phase", "Scope"], [
-        ["Later", "More tool domains (cloud, monitoring/logging, CI/CD-"
-                  "platform tooling); streaming; conversation-history "
-                  "persistence; human-approval gate before any mutating "
-                  "action is ever allowed."],
-        ["Phase 5 pending", "kubectl top (needs metrics-server), kubectl get "
-                            "hpa/pvc, node resource usage, a kubectl "
-                            "context selector."],
+        ["Phase 8", "Tool expansion (done): 21 more read-only tools (26 → "
+                    "47) — k8s depth, Docker depth, GitHub Actions, cloud "
+                    "identity, monitoring (env-configured), Ansible "
+                    "listing."],
+        ["Later", "Region-scoped cloud resources (ec2 describe-*, compute "
+                  "instances list, ...) behind the same template pattern; "
+                  "streaming; conversation-history persistence; "
+                  "human-approval gate before any mutating action is ever "
+                  "allowed."],
     ], [3.4 * cm, 13.1 * cm]),
     H2("Repository hygiene"),
     P("Phase 6 also git-tracked the project. .gitignore keeps secrets and "

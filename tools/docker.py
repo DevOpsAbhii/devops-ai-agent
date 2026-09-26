@@ -1,13 +1,14 @@
-"""Read-only Docker tools (Phase 5).
+"""Read-only Docker tools (Phases 5 and 8).
 
-Five tools for container problems on the host: list containers (docker ps),
+Eight tools for container problems on the host: list containers (docker ps),
 inspect one (JSON), tail logs, live resource stats (docker stats --no-stream),
-and the local image list. Same contract/safety model as the other modules.
+the local image list, and (Phase 8) networks, volumes, and disk usage. Same
+contract/safety model as the other modules.
 
 Safety model:
-- Only fixed argv templates exist with the docker verbs ps, inspect, logs,
-  stats, images — all read-only. There is no run, start, stop, restart,
-  rm, rmi, pull, push, exec, build or create path.
+- Only fixed argv templates exist with the read-only docker verbs ps, inspect,
+  logs, stats, images, network ls, volume ls, system df. There is no run,
+  start, stop, restart, rm, rmi, pull, push, exec, build, create or prune path.
 - `docker stats` is hard-coded with `--no-stream`: without it the command
   follows forever and would hang a turn.
 - Container/image names are validated (letters, digits, '.', '-', '_', no
@@ -165,8 +166,59 @@ DOCKER_IMAGES = Tool(
     executor=_docker_images,
 )
 
+# --- Phase 8: Docker depth — networks, volumes, disk usage -------------------
+
+def _docker_networks(args: dict) -> str:
+    return read_command_output(("docker", "network", "ls"), timeout=_TIMEOUT_S)
+
+
+def _docker_volumes(args: dict) -> str:
+    return read_command_output(("docker", "volume", "ls"), timeout=_TIMEOUT_S)
+
+
+def _docker_disk_usage(args: dict) -> str:
+    return read_command_output(("docker", "system", "df"), timeout=_TIMEOUT_S)
+
+
+DOCKER_NETWORKS = Tool(
+    name="docker_networks",
+    description=(
+        "List Docker networks on the host (docker network ls): name, driver, "
+        "scope. Use for 'which network does my container use', connectivity "
+        "and bridge/overlay questions. Read-only."
+    ),
+    parameters={"type": "object", "properties": {}, "additionalProperties": False},
+    executor=_docker_networks,
+)
+
+DOCKER_VOLUMES = Tool(
+    name="docker_volumes",
+    description=(
+        "List Docker volumes on the host (docker volume ls): volume names and "
+        "drivers. Use for 'does the volume my data lives in exist', dangling "
+        "volume checks. Read-only."
+    ),
+    parameters={"type": "object", "properties": {}, "additionalProperties": False},
+    executor=_docker_volumes,
+)
+
+DOCKER_DISK_USAGE = Tool(
+    name="docker_disk_usage",
+    description=(
+        "Docker disk usage on the host (docker system df): how much space "
+        "images, containers, volumes and the build cache consume, with "
+        "reclaimable amounts. Use for 'is the disk full because of Docker'. "
+        "Read-only."
+    ),
+    parameters={"type": "object", "properties": {}, "additionalProperties": False},
+    executor=_docker_disk_usage,
+)
+
 register(DOCKER_PS)
 register(DOCKER_INSPECT)
 register(DOCKER_LOGS)
 register(DOCKER_STATS)
 register(DOCKER_IMAGES)
+register(DOCKER_NETWORKS)
+register(DOCKER_VOLUMES)
+register(DOCKER_DISK_USAGE)

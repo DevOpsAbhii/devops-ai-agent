@@ -87,6 +87,33 @@ class ToolContractTests(unittest.TestCase):
                 "git_log",
                 "git_diff",
                 "gh_prs",
+                # GitHub Actions (Phase 8)
+                "gh_runs",
+                "gh_run_view",
+                "gh_workflows",
+                # Kubernetes depth (Phase 8)
+                "k8s_pods",
+                "k8s_top_pods",
+                "k8s_top_nodes",
+                "k8s_hpa",
+                "k8s_pvc",
+                "k8s_contexts",
+                # Docker depth (Phase 8)
+                "docker_networks",
+                "docker_volumes",
+                "docker_disk_usage",
+                # Cloud identity (Phase 8)
+                "aws_identity",
+                "gcloud_identity",
+                "az_account",
+                "az_groups",
+                # Monitoring / logging (Phase 8)
+                "prom_query",
+                "loki_query",
+                "grafana_health",
+                # Ansible listing (Phase 8)
+                "ansible_inventory",
+                "ansible_playbook_tasks",
             },
         )
 

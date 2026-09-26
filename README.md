@@ -16,7 +16,13 @@ the verdict instead of parsing markdown. **Phase 7 adds persistence:** the
 investigation record is auto-saved on every change to
 `~/.devops-ai-agent/investigations/` (overridable with `--store-dir` or
 `AGENT_STORE_DIR`), survives CLI exits, and the REPL resumes the newest
-in-progress record at startup. The repository is git-tracked.
+in-progress record at startup. **Phase 8 broadens the tool surface to 47
+read-only tools:** Kubernetes depth (pod listing, `kubectl top` resource
+usage, HPAs, PVCs, contexts), Docker depth (networks, volumes, disk usage),
+GitHub Actions via `gh` (runs, run jobs, workflows), cloud identity
+(AWS/GCP/Azure), monitoring/logging (Prometheus, Loki, Grafana — endpoints
+from environment config), and Ansible listing (inventory, playbook tasks).
+The repository is git-tracked.
 Every phase still built from scratch — no LangChain, LangGraph,
 AutoGen, CrewAI, or MCP.
 
@@ -31,9 +37,10 @@ for it.
 
 In Phase 5 the agent:
 - holds a conversation with **GLM 5.3** through **OpenRouter**;
-- has **26 real, read-only tools** across six domains: host facts,
-  Kubernetes (6 tools), Linux system (4), Docker (5), Terraform (3),
-  git/GitHub (4), plus the 3 investigation tools;
+- has **47 real, read-only tools** across ten domains: host facts,
+  Kubernetes (12 tools), Linux system (4), Docker (8), Terraform (3),
+  git/GitHub + Actions (7), cloud identity (4), monitoring/logging (3),
+  Ansible (2), plus the 3 investigation tools;
 - runs a **tool-use loop**: when the model decides a question needs evidence,
   it requests the tool, the application executes it locally, and the real
   output is fed back to the model, which then answers from it;
@@ -95,11 +102,14 @@ Module map:
 | `tools/base.py`             | Tool contract: `Tool`, `ToolError`, `read_command_output()`  |
 | `tools/registry.py`         | `register/get_tools/execute_tool` — tools declared & executed here |
 | `tools/preflight.py`        | `system_info` — host facts (allowlisted read-only commands)  |
-| `tools/kubernetes.py`       | 6 kubectl tools: pod status/logs, deployment, events, nodes, services |
+| `tools/kubernetes.py`       | 12 kubectl tools: pods, pod status/logs, deployments, events, nodes, top (cpu/mem), hpa, pvc, services, contexts |
 | `tools/system.py`           | systemd/journal/ss/ps tools — services, journals, ports, top processes |
-| `tools/docker.py`           | read-only docker tools — ps, inspect, logs, stats, images    |
+| `tools/docker.py`           | read-only docker tools — ps, inspect, logs, stats, images, networks, volumes, disk usage |
 | `tools/terraform.py`        | `tf_show` / `tf_state_list` / `tf_plan` (working directory)  |
-| `tools/git_ci.py`           | git status/log/diff + `gh_prs` (working directory)           |
+| `tools/git_ci.py`           | git status/log/diff + `gh_prs`, `gh_runs`, `gh_run_view`, `gh_workflows` (working directory) |
+| `tools/cloud.py`            | read-only cloud identity/listing: `aws_identity`, `gcloud_identity`, `az_account`, `az_groups` |
+| `tools/monitoring.py`       | `prom_query`, `loki_query`, `grafana_health` — endpoints from env config only |
+| `tools/ansible.py`          | `ansible_inventory`, `ansible_playbook_tasks` — listing modes only |
 | `tools/investigation.py`    | `investigation_begin` / `investigation_record` / `investigation_conclude` — meta-tools for the investigation record |
 | `tests/test_phase2.py`      | Offline suite: contract, safety, loop (stdlib `unittest`)     |
 | `tests/test_phase3.py`      | Offline suite: k8s command lines + verb-allowlist (fake kubectl) |
@@ -107,6 +117,7 @@ Module map:
 | `tests/test_phase5.py`      | Offline suite: argv templates + name validation for all new domains (fake CLIs) |
 | `tests/test_automation.py`  | Offline suite: JSON reports + one-shot CLI (Phase 6)                        |
 | `tests/test_phase7.py`      | Offline suite: round-trip serialization, store files, auto-save, resume, CLI flags (Phase 7) |
+| `tests/test_phase8.py`      | Offline suite: argv templates + validation for the 21 Phase 8 tools (fake CLIs, env-based monitoring) |
 
 ### The tool-use loop
 
@@ -172,7 +183,7 @@ You: /report
 Agent: # Investigation report  … (canonical, rendered from the record)
 ```
 
-### The tools (Phase 5)
+### The tools (Phases 5 and 8)
 
 Every tool runs a fixed, allowlisted command — the model only picks
 arguments (names, counts, namespaces), never command text.
@@ -186,6 +197,12 @@ arguments (names, counts, namespaces), never command text.
 |                  | `k8s_events`          | `kubectl get events -n <ns> --sort-by=.lastTimestamp -o wide [--field-selector involvedObject.name=<obj>]` |
 |                  | `k8s_nodes`           | `kubectl get nodes -o json`                          |
 |                  | `k8s_services`        | `kubectl get services -n <ns> -o json`               |
+|                  | `k8s_pods`            | `kubectl get pods -n <ns> -o wide`                   |
+|                  | `k8s_top_pods`        | `kubectl top pods -n <ns> [--sort-by=cpu\|memory]`   |
+|                  | `k8s_top_nodes`       | `kubectl top nodes`                                  |
+|                  | `k8s_hpa`             | `kubectl get hpa [<name>] -n <ns> -o json`           |
+|                  | `k8s_pvc`             | `kubectl get pvc [<name>] -n <ns> -o json`           |
+|                  | `k8s_contexts`        | `kubectl config get-contexts` (listing only — never `use-context`) |
 | Linux system     | `sys_service_status`  | `systemctl status <unit> --no-pager`                 |
 |                  | `sys_service_logs`    | `journalctl -u <unit> --no-pager -n <n>`             |
 |                  | `sys_open_ports`      | `ss -tlnp`                                           |
@@ -195,6 +212,9 @@ arguments (names, counts, namespaces), never command text.
 |                  | `docker_logs`         | `docker logs --tail <n> <name>`                      |
 |                  | `docker_stats`        | `docker stats --no-stream` (the flag is pinned — see below) |
 |                  | `docker_images`       | `docker images`                                      |
+|                  | `docker_networks`     | `docker network ls`                                  |
+|                  | `docker_volumes`      | `docker volume ls`                                   |
+|                  | `docker_disk_usage`   | `docker system df`                                   |
 | Terraform        | `tf_show`             | `terraform show -no-color`                           |
 |                  | `tf_state_list`       | `terraform state list`                               |
 |                  | `tf_plan`             | `terraform plan -no-color -input=false`              |
@@ -202,6 +222,18 @@ arguments (names, counts, namespaces), never command text.
 |                  | `git_log`             | `git log --oneline -n <n>`                           |
 |                  | `git_diff`            | `git diff --stat HEAD`                               |
 |                  | `gh_prs`              | `gh pr list --limit <n> --json number,title,state,...` |
+|                  | `gh_runs`             | `gh run list --limit <n> --json databaseId,displayTitle,status,...` |
+|                  | `gh_run_view`         | `gh run view <id> --json status,conclusion,jobs` (id digits-only) |
+|                  | `gh_workflows`        | `gh workflow list --limit <n> --json id,name,state`  |
+| Cloud identity   | `aws_identity`        | `aws sts get-caller-identity --output json`          |
+|                  | `gcloud_identity`     | `gcloud config list --format=json`                   |
+|                  | `az_account`          | `az account show`                                    |
+|                  | `az_groups`           | `az group list`                                      |
+| Monitoring       | `prom_query`          | `curl <PROMETHEUS_URL>/api/v1/query?query=<urlencoded PromQL>` |
+|                  | `loki_query`          | `curl <LOKI_URL>/loki/api/v1/query?query=<urlencoded LogQL>&limit=<n>` |
+|                  | `grafana_health`      | `curl <GRAFANA_URL>/api/health`                      |
+| Ansible          | `ansible_inventory`   | `ansible-inventory [--inventory <source>] --list`    |
+|                  | `ansible_playbook_tasks` | `ansible-playbook --list-tasks --list-hosts <playbook>` |
 | Investigation    | `investigation_begin` / `investigation_record` / `investigation_conclude` | record only — memory, no external command |
 
 Notes:
@@ -219,8 +251,22 @@ Notes:
   agent was launched from (no path parameters — that keeps traversal out).
 - `gh_prs` needs the `gh` CLI authenticated and a GitHub remote; otherwise
   the exact CLI error is returned.
+- `kubectl top` needs **metrics-server** in the cluster; where it is absent,
+  kubectl's exact error is returned (that is honest behavior, not a bug).
+- `k8s_contexts` is a listing of kubeconfig contexts only — the agent can
+  never run `config use-context` and change which cluster is in use.
+- **Monitoring endpoints come from the environment, never the model:**
+  `prom_query`/`loki_query`/`grafana_health` read `PROMETHEUS_URL` /
+  `LOKI_URL` / `GRAFANA_URL`; unset or non-http(s) values are honest
+  ToolErrors naming the variable. The model supplies only the PromQL/LogQL
+  text, which is percent-encoded into the query string; the pinned curl argv
+  (`--proto =https,http`, GET only) blocks `file://` and everything but the
+  configured host.
+- Cloud tools are identity/account level only and take no arguments at all;
+  Ansible tools are listing modes only (`--list`, `--list-tasks`) with
+  relative-path validation (no `/`, no leading `-`, no `..`).
 - Log tails (`--tail`, `-n`, `--limit`) are bounded integers, validated
-  1–500 (git log 1–100, gh 1–50).
+  1–500 (git log 1–100, gh 1–50, Loki limit 1–1000).
 - Any missing CLI / unreachable target returns the exact error — nothing is
   invented (verified live for kubectl, systemctl, journalctl, docker,
   terraform, git).
@@ -233,14 +279,19 @@ Notes:
   ever parsed by a shell; flags the model might abuse (e.g. `--no-stream`
   for docker stats, `-input=false` for terraform plan) are hard-coded into
   the template and cannot be removed or added.
-- Only read-only verbs exist per domain — `get`/`logs` (kubectl), `status`/
-  `-u`/`ss`/`ps` (system), `ps`/`inspect`/`logs`/`stats`/`images`
-  (docker), `show`/`state list`/`plan` (terraform), `status`/`log`/`diff`/
-  `pr list` (git/gh). No delete, restart, edit, apply, scale, exec, run, rm,
-  pull, push, commit, reset, merge, destroy — by construction.
+- Only read-only verbs exist per domain — `get`/`logs`/`top` and
+  `config get-contexts` (kubectl), `status`/`-u`/`ss`/`ps` (system),
+  `ps`/`inspect`/`logs`/`stats`/`images`/`network ls`/`volume ls`/
+  `system df` (docker), `show`/`state list`/`plan` (terraform),
+  `status`/`log`/`diff`/`pr list`/`run list`/`run view`/`workflow list`
+  (git/gh), `--list`/`--list-tasks` (ansible), GET-only curl with a pinned
+  argv (monitoring). No delete, restart, edit, apply, scale, exec, run, rm,
+  pull, push, commit, reset, merge, use-context, playbook-run, destroy —
+  by construction.
 - Names are validated per domain before reaching any CLI: Kubernetes object
   names (DNS style), systemd unit names (no `/`, no leading `-`), Docker
-  names (no `/`), and no path parameters at all for terraform/git/gh tools.
+  names (no `/`), GitHub run ids (digits only), Ansible sources (relative
+  paths, no `..`), and no path parameters at all for terraform/git/gh tools.
   This blocks flag and path injection.
 - The executor re-validates every argument. Never trust the model.
 - `--request-timeout`/timeouts bound slow or hanging commands, and logs are
@@ -298,11 +349,14 @@ Recommended CLIs, by domain:
 
 | Domain       | CLIs needed                                      |
 | ------------ | ------------------------------------------------ |
-| Kubernetes   | `kubectl` (configured cluster context)           |
+| Kubernetes   | `kubectl` (configured cluster context; metrics-server for `top`) |
 | Linux system | `systemctl`, `journalctl`, `ss`, `ps` (systemd host) |
 | Docker       | `docker` (daemon running)                        |
 | Terraform    | `terraform` (initialized working directory)      |
-| git / GitHub | `git`; `gh` (authenticated, for PRs)             |
+| git / GitHub | `git`; `gh` (authenticated, for PRs and Actions) |
+| Cloud        | `aws` / `gcloud` / `az` (only the ones you use)  |
+| Monitoring   | `curl` + endpoint env vars (see below)           |
+| Ansible      | `ansible-inventory`, `ansible-playbook`          |
 
 ## 6. Environment setup
 
@@ -322,6 +376,9 @@ Optional overrides (defaults shown):
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_MODEL=z-ai/glm-5.3
 AGENT_STORE_DIR=~/.devops-ai-agent/investigations   # (Phase 7) where records are saved
+PROMETHEUS_URL=http://prometheus:9090               # (Phase 8) enables prom_query
+LOKI_URL=http://loki:3100                           # (Phase 8) enables loki_query
+GRAFANA_URL=http://grafana:3000                     # (Phase 8) enables grafana_health
 ```
 
 `.env` is gitignored; the API key is never hard-coded in Python, printed, or
@@ -372,17 +429,22 @@ it never interrupts an investigation.
 Example session:
 
 ```
-DevOps AI Agent (Phase 7 — persistent investigations)
+DevOps AI Agent (Phase 8 — 47 read-only tools, persistent investigations)
 Model:   z-ai/glm-5.3
 Backend: https://openrouter.ai/api/v1
 Store:   /home/you/.devops-ai-agent/investigations
-Tools:   docker_images, docker_inspect, docker_logs, docker_ps,
-         docker_stats, gh_prs, git_diff, git_log, git_repo_status,
-         investigation_begin, investigation_conclude, investigation_record,
-         k8s_deployment_status, k8s_events, k8s_nodes, k8s_pod_logs,
-         k8s_pod_status, k8s_services, sys_open_ports, sys_service_logs,
-         sys_service_status, sys_top_processes, system_info, tf_plan,
-         tf_show, tf_state_list
+Tools:   ansible_inventory, ansible_playbook_tasks, aws_identity,
+         az_account, az_groups, docker_disk_usage, docker_images,
+         docker_inspect, docker_logs, docker_networks, docker_ps,
+         docker_stats, docker_volumes, gcloud_identity, gh_prs,
+         gh_run_view, gh_runs, gh_workflows, git_diff, git_log,
+         git_repo_status, grafana_health, investigation_begin,
+         investigation_conclude, investigation_record, k8s_contexts,
+         k8s_deployment_status, k8s_events, k8s_hpa, k8s_nodes,
+         k8s_pod_logs, k8s_pod_status, k8s_pods, k8s_pvc, k8s_services,
+         k8s_top_nodes, k8s_top_pods, loki_query, prom_query,
+         sys_open_ports, sys_service_logs, sys_service_status,
+         sys_top_processes, system_info, tf_plan, tf_show, tf_state_list
 Commands: /investigate <problem>, /investigation, /investigations, /report, /endinvestigation
 One-shot: python main.py [--json] [--resume] [--out report.json] [--store-dir DIR] "<problem>"
 Type 'exit' to quit.
@@ -401,20 +463,26 @@ You: exit
 Type `exit` / `quit`, or press Ctrl-D / Ctrl-C to leave. Slash commands are
 handled locally and never reach the model.
 
-## 8. Current limitations (Phase 7)
+## 8. Current limitations (Phase 8)
 
 - **Each domain needs its CLI installed and reachable.** Missing CLIs,
   unauthenticated `gh`, a dead docker daemon, an uninitialized terraform
   directory, or an unreachable cluster all return the exact error honestly —
   nothing is invented, but a tool can't produce data without its backend.
-- **terraform/git/gh tools are working-directory scoped.** They read the
-  directory the agent was launched from — no path arguments by design (keeps
-  traversal out). To investigate another repo/module, launch the agent there.
-- **Cloud provider CLIs (AWS/GCP/Azure), monitoring/log aggregation, and
-  generic CI/CD platforms are not integrated yet.** The agent says so rather
-  than pretending.
-- **No `kubectl top` (resource usage) yet** — minikube lacks metrics-server
-  by default, so it would fail honestly on this cluster; it's on the roadmap.
+- **terraform/git/gh/ansible tools are working-directory scoped.** They read
+  the directory the agent was launched from — no path arguments by design
+  (keeps traversal out). To investigate another repo/module, launch the
+  agent there.
+- **Monitoring endpoints are environment-configured by design.** Unless the
+  operator sets `PROMETHEUS_URL` / `LOKI_URL` / `GRAFANA_URL`, those tools
+  fail with an honest message naming the variable; the agent never invents
+  a URL.
+- **`kubectl top` needs metrics-server.** Clusters without it return
+  kubectl's exact error — honest, but no usage data.
+- **Cloud tools are identity-level only.** `aws_identity`,
+  `gcloud_identity`, `az_account`, `az_groups` answer "which account am I
+  looking at" but do not sweep region-scoped resources (ec2 describe-*,
+  compute instances list, ...) yet.
 - **The model can only select from the registered tools.** It can never run
   an arbitrary verb of any CLI, or a mutating one — by construction.
 - **Raw CLI output to the model.** Python does not re-parse pod/docs/state;
@@ -445,8 +513,6 @@ handled locally and never reach the model.
   journal/ports/processes), Docker (ps/inspect/logs/stats/images),
   Kubernetes depth (events/nodes/services), Terraform (show/state/plan),
   git/GitHub (status/log/diff/PRs) — all read-only, offline + live verified.
-  *Pending:* `kubectl top` (needs metrics-server), `kubectl get hpa`/
-  `pvc`, node resource usage, and a `kubectl` context selector.
 - **Phase 6 — automation surface. ✅ Done.** One-shot CLI mode
   (`python main.py [--json] "<problem>"`) with exit codes for cron/CI, and
   a structured JSON export of the investigation report (`render_report_json`)
@@ -459,6 +525,16 @@ handled locally and never reach the model.
   in-progress record, `/investigations` listing, one-shot `--resume` /
   `--out`, and lossless `to_dict`/`from_dict` round-tripping — all offline
   tested.
-- **Later — more tool domains (cloud, monitoring/logging, CI/CD-platform
-  tooling);** streaming; conversation-history persistence; and
-  a human-approval gate before any mutating action is ever allowed.
+- **Phase 8 — tool expansion. ✅ Done.** 21 more read-only tools (26 → 47):
+  Kubernetes depth (`k8s_pods`, `k8s_top_pods`, `k8s_top_nodes`, `k8s_hpa`,
+  `k8s_pvc`, `k8s_contexts`), Docker depth (`docker_networks`,
+  `docker_volumes`, `docker_disk_usage`), GitHub Actions (`gh_runs`,
+  `gh_run_view`, `gh_workflows`), cloud identity (`aws_identity`,
+  `gcloud_identity`, `az_account`, `az_groups`), monitoring/logging
+  (`prom_query`, `loki_query`, `grafana_health` — endpoints from env only),
+  and Ansible listing (`ansible_inventory`, `ansible_playbook_tasks`) —
+  offline tested, live-verified where the host has the CLI.
+- **Later — region-scoped cloud resources** (ec2 describe-*, compute
+  instances list, ...) behind the same template pattern; streaming;
+  conversation-history persistence; and a human-approval gate before any
+  mutating action is ever allowed.
