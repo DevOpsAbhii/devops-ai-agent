@@ -5,14 +5,18 @@ something like *"Why is my Kubernetes pod in CrashLoopBackOff?"* and have it
 gather evidence, reason about the evidence, identify the likely root cause,
 recommend remediation, and give verification steps.
 
-**Phase 5 (what is in this repository right now)** broadens the agent from
+**Phase 5** broadens the agent from
 Kubernetes-only to the wider DevOps surface: Linux systemd services and
 journals, Docker containers, Terraform state/plan, and git/GitHub pull
 requests — every tool still read-only, still a fixed allowlisted argv
 template. **Phase 6 adds the automation surface:** a one-shot CLI mode
 (`python main.py "problem"` — exit-code driven, cron/CI-friendly) and a
 structured JSON export of the investigation report, so pipelines can act on
-the verdict instead of parsing markdown. The repository is now git-tracked.
+the verdict instead of parsing markdown. **Phase 7 adds persistence:** the
+investigation record is auto-saved on every change to
+`~/.devops-ai-agent/investigations/` (overridable with `--store-dir` or
+`AGENT_STORE_DIR`), survives CLI exits, and the REPL resumes the newest
+in-progress record at startup. The repository is git-tracked.
 Every phase still built from scratch — no LangChain, LangGraph,
 AutoGen, CrewAI, or MCP.
 
@@ -87,6 +91,7 @@ Module map:
 | `agent/agent.py`            | `DevOpsAgent` — client, history, `ask()`, `_complete()` loop |
 | `agent/prompts.py`          | The system prompt (versioned/tested separately)              |
 | `agent/investigation.py`    | First-class investigation record: hypotheses, verdicts, evidence, report renderer (pure data) |
+| `agent/store.py`            | `InvestigationStore` — one JSON file per record, atomic writes, resume/list (Phase 7) |
 | `tools/base.py`             | Tool contract: `Tool`, `ToolError`, `read_command_output()`  |
 | `tools/registry.py`         | `register/get_tools/execute_tool` — tools declared & executed here |
 | `tools/preflight.py`        | `system_info` — host facts (allowlisted read-only commands)  |
@@ -100,6 +105,8 @@ Module map:
 | `tests/test_phase3.py`      | Offline suite: k8s command lines + verb-allowlist (fake kubectl) |
 | `tests/test_phase4.py`      | Offline suite: investigation state, meta-tools, loop-driven investigation |
 | `tests/test_phase5.py`      | Offline suite: argv templates + name validation for all new domains (fake CLIs) |
+| `tests/test_automation.py`  | Offline suite: JSON reports + one-shot CLI (Phase 6)                        |
+| `tests/test_phase7.py`      | Offline suite: round-trip serialization, store files, auto-save, resume, CLI flags (Phase 7) |
 
 ### The tool-use loop
 
@@ -143,8 +150,9 @@ the CLI exposes it directly:
 | ------------------------ | --------------------------------------------------- |
 | `/investigate <problem>` | Open a formal investigation (same path the model uses) |
 | `/investigation`         | Show the live tracked state (hypotheses/evidence)   |
+| `/investigations`        | List saved records on disk (newest first; `← active` marks the live one) |
 | `/report`                | Show the canonical report (once concluded)          |
-| `/endinvestigation`      | Clear the record (memory only — no system changes)  |
+| `/endinvestigation`      | Clear the record (memory only — the saved copy stays as history) |
 
 The report the agent ends with and `/report` render are kept consistent by
 construction: `tool` results confirm each record call and the tracker, and
@@ -313,6 +321,7 @@ Optional overrides (defaults shown):
 ```
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_MODEL=z-ai/glm-5.3
+AGENT_STORE_DIR=~/.devops-ai-agent/investigations   # (Phase 7) where records are saved
 ```
 
 `.env` is gitignored; the API key is never hard-coded in Python, printed, or
@@ -336,21 +345,37 @@ setup/API errors — so it drops straight into a pipeline:
 ```bash
 .venv/bin/python main.py "why is api-5d6f crash-looping?"
 .venv/bin/python main.py --json "why is api-5d6f crash-looping?"   # structured report
+.venv/bin/python main.py --resume --json "any update?"             # continue a prior run
+.venv/bin/python main.py --store-dir /tmp/runs --out report.json "..."  # pipeline paths
 ```
 
 With `--json` the stdout is one JSON document (see `render_report_json` in
 `agent/investigation.py`): `problem`, `status`, `hypotheses`, `evidence`,
 and — once concluded — `conclusion` with `root_cause`, `remediation`,
 `verification`, `confidence`. If the model never opened an investigation,
-`--json` fails with exit 1 rather than printing a malformed report. Slash
-commands also work one-shot: `python main.py /report`.
+`--json`/`--out` fail with exit 1 rather than printing a malformed report.
+`--out PATH` additionally writes that JSON to an exact path for pipelines
+that want a known location; `--store-dir DIR` points persistence somewhere
+else for the run; `--resume` continues the newest in-progress record from
+the store before asking. Slash commands also work one-shot:
+`python main.py /report`.
+
+**Persistence (Phase 7):** every record mutation is auto-saved to
+`~/.devops-ai-agent/investigations/` — one JSON file per investigation,
+written atomically on every begin/record/conclude, so a crash mid-run
+loses nothing. The REPL resumes the newest *in-progress* record at startup
+(concluded records stay as history); `/investigations` lists everything on
+disk; `/endinvestigation` clears memory but keeps the saved file. A broken
+store (permissions, full disk) degrades to a warning in the tool result —
+it never interrupts an investigation.
 
 Example session:
 
 ```
-DevOps AI Agent (Phase 6 — one-shot CLI, JSON reports, git-tracked)
+DevOps AI Agent (Phase 7 — persistent investigations)
 Model:   z-ai/glm-5.3
 Backend: https://openrouter.ai/api/v1
+Store:   /home/you/.devops-ai-agent/investigations
 Tools:   docker_images, docker_inspect, docker_logs, docker_ps,
          docker_stats, gh_prs, git_diff, git_log, git_repo_status,
          investigation_begin, investigation_conclude, investigation_record,
@@ -358,8 +383,8 @@ Tools:   docker_images, docker_inspect, docker_logs, docker_ps,
          k8s_pod_status, k8s_services, sys_open_ports, sys_service_logs,
          sys_service_status, sys_top_processes, system_info, tf_plan,
          tf_show, tf_state_list
-Commands: /investigate <problem>, /investigation, /report, /endinvestigation
-One-shot: python main.py [--json] "<problem>"   (cron/CI-friendly)
+Commands: /investigate <problem>, /investigation, /investigations, /report, /endinvestigation
+One-shot: python main.py [--json] [--resume] [--out report.json] [--store-dir DIR] "<problem>"
 Type 'exit' to quit.
 
 You: The checkout service container keeps exiting in Docker. Investigate.
@@ -376,7 +401,7 @@ You: exit
 Type `exit` / `quit`, or press Ctrl-D / Ctrl-C to leave. Slash commands are
 handled locally and never reach the model.
 
-## 8. Current limitations (Phase 5)
+## 8. Current limitations (Phase 7)
 
 - **Each domain needs its CLI installed and reachable.** Missing CLIs,
   unauthenticated `gh`, a dead docker daemon, an uninitialized terraform
@@ -394,8 +419,9 @@ handled locally and never reach the model.
   an arbitrary verb of any CLI, or a mutating one — by construction.
 - **Raw CLI output to the model.** Python does not re-parse pod/docs/state;
   the model interprets real output, truncated at 8,000 characters per result.
-- **Short-term memory only.** History *and the investigation record* live in
-  the process and are lost when the CLI exits.
+- **Conversation history is short-term only.** The investigation record
+  persists across CLI exits (Phase 7), but chat history still lives in the
+  process and is lost when the CLI exits.
 - **Hypothesis tracking is model-driven.** The record is what the model
   chose to record through the investigation tools; the live tracker returned
   on every record call is designed to keep that complete, but it is still
@@ -426,6 +452,13 @@ handled locally and never reach the model.
   a structured JSON export of the investigation report (`render_report_json`)
   so pipelines can act on the verdict. Repository is git-tracked with a
   clean `.gitignore` (secrets and the venv never ride along).
-- **Later — cloud, monitoring/logging, CI/CD-platform tooling;**
-  streaming; persistence (the investigation record survives CLI exits); and
+- **Phase 7 — persistence. ✅ Done.** The investigation record survives CLI
+  exits: auto-saved on every mutation to
+  `~/.devops-ai-agent/investigations/` (`--store-dir`/`AGENT_STORE_DIR` to
+  override), atomic in-place file updates, REPL auto-resume of the newest
+  in-progress record, `/investigations` listing, one-shot `--resume` /
+  `--out`, and lossless `to_dict`/`from_dict` round-tripping — all offline
+  tested.
+- **Later — more tool domains (cloud, monitoring/logging, CI/CD-platform
+  tooling);** streaming; conversation-history persistence; and
   a human-approval gate before any mutating action is ever allowed.

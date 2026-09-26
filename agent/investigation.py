@@ -247,6 +247,72 @@ class Investigation:
             }
         return out
 
+    # --- persistence (Phase 7) — lossless round-trip for the store ------------
+
+    def to_dict(self, *, saved_at: str | None = None) -> dict:
+        """Full serializable state, for the store to write to disk.
+
+        render_report_json() is already a lossless view of the record, so
+        persistence reuses it and adds storage metadata: `schema` (format
+        version, bumped only on breaking changes) and `saved_at` (ISO
+        timestamp, set by the store). from_dict() round-trips this exactly.
+        """
+        out = self.render_report_json()
+        out["schema"] = 1
+        if saved_at is not None:
+            out["saved_at"] = saved_at
+        return out
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Investigation":
+        """Rebuild an Investigation from to_dict() output.
+
+        Tolerant of unknown keys (forward compatible) and strict about our
+        own: a corrupt or truncated file raises InvestigationError (or
+        KeyError for a missing problem), which the store turns into "skip
+        this file" rather than a crash.
+        """
+        inv = cls(data["problem"])
+        for h in data.get("hypotheses") or []:
+            hyp = Hypothesis(
+                id=str(h.get("id", "")),
+                statement=str(h.get("statement", "")),
+                status="proposed",
+                notes=[str(n) for n in (h.get("notes") or [])],
+            )
+            hyp.set_status(str(h.get("status", "proposed")))
+            number = _id_number(hyp.id, "H")
+            if number is None:
+                raise InvestigationError(f"malformed hypothesis id {hyp.id!r}")
+            inv.hypotheses.append(hyp)
+            if number >= inv._next_h:
+                inv._next_h = number + 1
+        for e in data.get("evidence") or []:
+            hypothesis_id = e.get("hypothesis_id")
+            note = EvidenceNote(
+                id=str(e.get("id", "")),
+                content=str(e.get("content", "")),
+                hypothesis_id=str(hypothesis_id) if hypothesis_id else None,
+            )
+            number = _id_number(note.id, "E")
+            if number is None:
+                raise InvestigationError(f"malformed evidence id {note.id!r}")
+            if note.hypothesis_id is not None:
+                inv._get_hypothesis(note.hypothesis_id)  # validate the link
+            inv.evidence.append(note)
+            if number >= inv._next_e:
+                inv._next_e = number + 1
+        c = data.get("conclusion")
+        if c is not None:
+            inv.conclude(
+                summary=str(c.get("summary", "")),
+                root_cause=str(c.get("root_cause", "")),
+                remediation=c.get("remediation") or [],
+                verification=c.get("verification") or [],
+                confidence=str(c.get("confidence", "medium")),
+            )
+        return inv
+
     def _get_hypothesis(self, hypothesis_id: str) -> Hypothesis:
         found = next((h for h in self.hypotheses if h.id == hypothesis_id), None)
         if found is None:
@@ -263,3 +329,11 @@ def _string_list(value: str | list[str], label: str) -> list[str]:
     if not cleaned:
         raise InvestigationError(f"{label} must contain at least one item")
     return cleaned
+
+
+def _id_number(value: str, prefix: str) -> int | None:
+    """Numeric suffix of an H*/E* id (H12 -> 12), or None if malformed."""
+    if not value.startswith(prefix):
+        return None
+    tail = value[len(prefix):]
+    return int(tail) if tail.isdigit() else None

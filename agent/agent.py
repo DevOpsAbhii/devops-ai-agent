@@ -19,6 +19,10 @@ more registered tools — they persist state in agent/investigation.py, which
 mutates nothing outside the agent's own memory. The read-only guarantee
 holds: every tool is a fixed, allowlisted argv template; no tool can touch
 a cluster, a file, or infrastructure beyond reading it.
+
+Phase 7 makes that record durable: every mutation is auto-saved to the
+InvestigationStore (agent/store.py), so the investigation survives CLI
+exits; the delegates below expose resume/list/store-location to the CLI.
 """
 
 import os
@@ -26,6 +30,7 @@ import os
 from openai import OpenAI
 
 from agent.prompts import SYSTEM_PROMPT
+from agent.store import InvestigationStore
 from tools import (  # noqa: F401 — side effect: each module registers its tools
     docker,
     git_ci,
@@ -37,10 +42,14 @@ from tools import (  # noqa: F401 — side effect: each module registers its too
 )
 from tools.investigation import (
     finish_investigation,
+    list_saved_text,
     report_json,
     report_text,
+    resume_investigation as load_resumable_investigation,
+    set_store as set_investigation_store,
     start_investigation,
     status_text,
+    store_directory_text,
 )
 from tools.registry import execute_tool, get_tools
 
@@ -130,6 +139,29 @@ class DevOpsAgent:
     def end_investigation(self) -> str:
         """Clear the active investigation (read-only: discards only memory)."""
         return finish_investigation()
+
+    # --- persistence (Phase 7) — thin CLI-facing delegates ---------------------
+    #
+    # The record is auto-saved by the mutation chokepoint in
+    # tools/investigation.py; these methods expose resume/list/store-location
+    # to the CLI (REPL startup auto-resume, /investigations, --store-dir).
+
+    @property
+    def store_dir(self) -> str | None:
+        """Directory records are saved to, or None when persistence is off."""
+        return store_directory_text()
+
+    def list_investigations(self) -> str | None:
+        """Saved investigation records, newest first, or None if none."""
+        return list_saved_text()
+
+    def resume_investigation(self) -> str | None:
+        """Continue the newest in-progress record, or None if there is none."""
+        return load_resumable_investigation()
+
+    def use_store_dir(self, directory: str) -> None:
+        """Point persistence at `directory` (--store-dir; tests use tmpdirs)."""
+        set_investigation_store(InvestigationStore(directory))
 
     def _complete(self) -> str:
         """The tool-use loop — the single chokepoint where the backend is called.

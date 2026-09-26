@@ -81,8 +81,14 @@ class JSONReportTests(unittest.TestCase):
 class ToolsReportJsonTests(unittest.TestCase):
     """report_json() — the module-level export the agent delegate calls."""
 
+    def setUp(self):
+        # Persistence is not under test here — keep it off so nothing is
+        # written outside the test sandbox (Phase 7).
+        inv_tools.set_store(None)
+
     def tearDown(self):
         inv_tools.finish_investigation()
+        inv_tools.set_store(None)
 
     def test_none_without_active_investigation(self):
         self.assertIsNone(inv_tools.report_json())
@@ -117,12 +123,14 @@ class AgentDelegateTests(unittest.TestCase):
         os.environ["OPENROUTER_API_KEY"] = "test-key-for-offline-tests"
         self.agent = DevOpsAgent()
         self.addCleanup(self._restore_key)
+        inv_tools.set_store(None)
 
     def _restore_key(self):
         os.environ.pop("OPENROUTER_API_KEY", None)
         if self._old_key is not None:
             os.environ["OPENROUTER_API_KEY"] = self._old_key
         inv_tools.finish_investigation()
+        inv_tools.set_store(None)
 
     def test_delegate_returns_none_when_idle(self):
         self.assertIsNone(self.agent.investigation_report_json())
@@ -162,12 +170,14 @@ class OneShotCliTests(unittest.TestCase):
         self.agent = DevOpsAgent()
         self.agent.client.chat.completions = StubChat("investigation complete.")
         self.addCleanup(self._restore_key)
+        inv_tools.set_store(None)
 
     def _restore_key(self):
         os.environ.pop("OPENROUTER_API_KEY", None)
         if self._old_key is not None:
             os.environ["OPENROUTER_API_KEY"] = self._old_key
         inv_tools.finish_investigation()
+        inv_tools.set_store(None)
 
     def _run(self, task: str, as_json: bool = False) -> tuple[int, str]:
         out = io.StringIO()
@@ -176,13 +186,21 @@ class OneShotCliTests(unittest.TestCase):
         return code, out.getvalue()
 
     def test_parse_args(self):
-        self.assertEqual(main_module.parse_args([]), (None, False))
-        self.assertEqual(main_module.parse_args(["why is it down?"]), ("why is it down?", False))
+        self.assertEqual(
+            main_module.parse_args([]), (None, False, None, False, None)
+        )
+        self.assertEqual(
+            main_module.parse_args(["why is it down?"]),
+            ("why is it down?", False, None, False, None),
+        )
         self.assertEqual(
             main_module.parse_args(["--json", "why", "is it down?"]),
-            ("why is it down?", True),
+            ("why is it down?", True, None, False, None),
         )
-        self.assertEqual(main_module.parse_args(["--json"]), (None, False))
+        self.assertEqual(
+            main_module.parse_args(["--json"]),
+            (None, True, None, False, None),
+        )
 
     def test_slash_command_routes_without_model(self):
         code, out = self._run("/report")

@@ -8,19 +8,27 @@ REPL (default):
 One-shot (for cron / CI / scripts):
     python main.py "why is api-5d6f crash-looping?"
     python main.py --json "why is api-5d6f crash-looping?"   # structured report
+    python main.py --resume --json "any update?"             # continue prior run
+    python main.py --store-dir DIR --out report.json "..."   # pipeline paths
 
 One-shot mode sends the problem once, prints the agent's report, and exits
 with a status code (0 = completed, 1 = setup/API error). With --json the
 output is the tracked investigation as JSON (see agent/investigation.py:
 render_report_json) instead of the markdown report, so a pipeline can act
-on the verdict. Slash commands work in both modes (/investigate, /report,
-...). Read-only: nothing here ever mutates a real system.
+on the verdict. --out additionally writes that JSON to an exact path.
+Phase 7: the investigation record is auto-saved on every change
+(~/.devops-ai-agent/investigations/ by default) and survives CLI exits; the
+REPL resumes the newest in-progress record at startup. Slash commands work
+in both modes (/investigate, /investigations, /report, ...). Read-only:
+nothing here ever mutates a real system.
 
 Type `exit` (or `quit`, or Ctrl-D / Ctrl-C) to leave the REPL.
 """
 
 import json
 import sys
+from pathlib import Path
+from typing import NamedTuple
 
 from dotenv import load_dotenv
 from openai import (
@@ -42,6 +50,8 @@ COMMAND_ALIASES = {
     "/inv": "/investigate",
     "/investigation": "/investigation",
     "/status": "/investigation",
+    "/investigations": "/investigations",
+    "/history": "/investigations",
     "/report": "/report",
     "/endinvestigation": "/endinvestigation",
     "/end": "/endinvestigation",
@@ -53,7 +63,8 @@ def handle_command(text: str, agent: DevOpsAgent) -> str | None:
 
     Command lines are detected by main() and routed here without ever
     reaching the model. All commands are read-only with respect to real
-    systems: they only inspect or clear the agent's in-memory record.
+    systems: they only inspect or clear the agent's in-memory record (and,
+    for /investigations, list the saved copies on disk).
     """
     cmd, _, rest = text.partition(" ")
     canonical = COMMAND_ALIASES.get(cmd.lower())
@@ -65,41 +76,89 @@ def handle_command(text: str, agent: DevOpsAgent) -> str | None:
         return agent.begin_investigation(problem)
     if canonical == "/investigation":
         return agent.investigation_status_text() or "(no active investigation)"
+    if canonical == "/investigations":
+        return agent.list_investigations() or "(no saved investigations yet)"
     if canonical == "/report":
         return agent.investigation_report_text() or "(no investigation recorded)"
     if canonical == "/endinvestigation":
         return agent.end_investigation()
-    return f"unknown command: {cmd}. Try /investigate <problem>, /investigation, /report, /endinvestigation"
+    return (f"unknown command: {cmd}. Try /investigate <problem>, "
+            "/investigation, /investigations, /report, /endinvestigation")
 
 
-def parse_args(argv: list[str]) -> tuple[str | None, bool]:
-    """Split one-shot CLI args into (task_text, as_json).
+class OneShotArgs(NamedTuple):
+    """Parsed one-shot CLI arguments (task=None means "run the REPL")."""
 
-    (None, False) means "run the REPL". A bare task is any positional text;
+    task: str | None
+    as_json: bool
+    store_dir: str | None  # --store-dir PATH (persistence override)
+    resume: bool           # --resume (continue the newest in-progress record)
+    out: str | None        # --out PATH (also write the JSON report there)
+
+
+_VALUE_FLAGS = ("--store-dir", "--out")
+
+
+def _flag_value(argv: list[str], flag: str) -> str | None:
+    """Value of `flag <value>` in argv, or None when absent/missing."""
+    for i, arg in enumerate(argv):
+        if arg == flag and i + 1 < len(argv):
+            return argv[i + 1]
+    return None
+
+
+def parse_args(argv: list[str]) -> OneShotArgs:
+    """Split one-shot CLI args.
+
+    task=None means "run the REPL". A bare task is any positional text;
     --json switches the one-shot output from markdown to the structured JSON
-    report. Example: `python main.py --json "why is it down?"` ->
-    ("why is it down?", True).
+    report; --resume continues the newest in-progress record from the store;
+    --store-dir PATH overrides the persistence directory for this run; --out
+    PATH additionally writes the JSON report to an exact path. Example:
+    `python main.py --json --out r.json "why is it down?"` ->
+    ("why is it down?", True, None, False, "r.json").
     """
     as_json = "--json" in argv
-    positionals = [arg for arg in argv if arg != "--json"]
+    do_resume = "--resume" in argv
+    store_dir = _flag_value(argv, "--store-dir")
+    out = _flag_value(argv, "--out")
+    positionals: list[str] = []
+    skip_next = False
+    for arg in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg in _VALUE_FLAGS:
+            skip_next = True  # its value was captured by _flag_value
+            continue
+        if arg in ("--json", "--resume"):
+            continue
+        positionals.append(arg)
     text = " ".join(positionals).strip()
     if not positionals or not text:
-        return None, False
-    return text, as_json
+        return OneShotArgs(None, as_json, store_dir, do_resume, out)
+    return OneShotArgs(text, as_json, store_dir, do_resume, out)
 
 
 def run_one_shot(
     task: str,
     as_json: bool = False,
     agent: DevOpsAgent | None = None,
+    store_dir: str | None = None,
+    resume: bool = False,
+    out: str | None = None,
 ) -> int:
     """Non-interactive single run: send `task`, print the result, exit cleanly.
 
-    Exit code 1 on setup/API errors. With as_json, the printed output is the
-    tracked investigation as JSON; if the model never opened an investigation
-    this is a hard failure (exit 1) — a caller asked for a report and there
-    is none to give. `agent` lets embedders reuse a configured agent (also the
-    test seam); default builds a fresh one from the environment.
+    Exit code 1 on setup/API errors. With as_json (or out), the printed /
+    written output is the tracked investigation as JSON; if the model never
+    opened an investigation this is a hard failure (exit 1) — a caller asked
+    for a report and there is none to give. The record is auto-saved on every
+    mutation regardless; store_dir points persistence somewhere else for this
+    run, resume continues the newest in-progress record before asking, and
+    out additionally writes the JSON report to an exact path. `agent` lets
+    embedders reuse a configured agent (also the test seam); default builds a
+    fresh one from the environment.
     """
     if agent is None:
         try:
@@ -107,6 +166,11 @@ def run_one_shot(
         except ValueError as exc:
             print(f"[setup] {exc}", file=sys.stderr)
             return 1
+
+    if store_dir is not None:
+        agent.use_store_dir(store_dir)
+    if resume:
+        agent.resume_investigation()
 
     if task.startswith("/"):
         print(handle_command(task, agent))
@@ -121,17 +185,27 @@ def run_one_shot(
         print(f"[error] {describe_error(exc)}", file=sys.stderr)
         return 1
 
-    if as_json:
+    if as_json or out is not None:
         report = agent.investigation_report_json()
         if report is None:
             print(
-                "[error] --json requested but the run recorded no investigation",
+                "[error] --json/--out requested but the run recorded no "
+                "investigation",
                 file=sys.stderr,
             )
             return 1
-        print(json.dumps(report, indent=2, ensure_ascii=False))
-    else:
-        print(reply)
+        rendered = json.dumps(report, indent=2, ensure_ascii=False)
+        if out is not None:
+            try:
+                Path(out).write_text(rendered + "\n", encoding="utf-8")
+            except OSError as exc:
+                print(f"[error] could not write --out {out}: {exc}",
+                      file=sys.stderr)
+                return 1
+        if as_json:
+            print(rendered)
+            return 0
+    print(reply)
     return 0
 
 
@@ -162,10 +236,16 @@ def main() -> int:
     # Load .env (never overrides variables already set in the shell).
     load_dotenv()
 
-    # One-shot mode: `python main.py ["--json"] <problem or /command>`.
-    task, as_json = parse_args(sys.argv[1:])
-    if task is not None:
-        return run_one_shot(task, as_json=as_json)
+    # One-shot mode: `python main.py [flags] <problem or /command>`.
+    args = parse_args(sys.argv[1:])
+    if args.task is not None:
+        return run_one_shot(
+            args.task,
+            as_json=args.as_json,
+            store_dir=args.store_dir,
+            resume=args.resume,
+            out=args.out,
+        )
 
     try:
         agent = DevOpsAgent()
@@ -175,14 +255,24 @@ def main() -> int:
 
     tool_names = ", ".join(sorted(tool.name for tool in agent.tools)) or "none"
 
-    print("DevOps AI Agent (Phase 6 — one-shot CLI, JSON reports, git-tracked)")
+    print("DevOps AI Agent (Phase 7 — persistent investigations)")
     print(f"Model:   {agent.model}")
     print(f"Backend: {agent.base_url}")
+    print(f"Store:   {agent.store_dir or '(persistence off)'}")
     print(f"Tools:   {tool_names}")
-    print("Commands: /investigate <problem>, /investigation, /report, /endinvestigation")
-    print("One-shot: python main.py [--json] \"<problem>\"   (cron/CI-friendly)")
+    print("Commands: /investigate <problem>, /investigation, /investigations, "
+          "/report, /endinvestigation")
+    print("One-shot: python main.py [--json] [--resume] [--out report.json] "
+          "[--store-dir DIR] \"<problem>\"")
     print("Type 'exit' to quit.")
     print()
+
+    # Phase 7: pick up the newest in-progress record so a previous session's
+    # work is not lost (fresh investigations start with /investigate as usual).
+    resumed = agent.resume_investigation()
+    if resumed:
+        print(resumed)
+        print()
 
     while True:
         try:

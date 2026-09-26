@@ -208,7 +208,7 @@ story += [
         ["Project", "devops-ai-agent  (~/devops-ai-agent)"],
         ["Model", "GLM 5.3  (z-ai/glm-5.3) via OpenRouter"],
         ["Language", "Python 3.10+ (stdlib tools + openai SDK + python-dotenv)"],
-        ["Phases complete", "1 – 6  (Phase 6: one-shot CLI, JSON reports, git-tracked)"],
+        ["Phases complete", "1 – 7  (Phase 7: persistent investigations)"],
         ["Tools", "26 real, read-only tools across 6 domains"],
         ["Generated", TODAY],
     ], [4.2 * cm, 12.3 * cm]),
@@ -288,6 +288,9 @@ story += [
               "read-only.", "Done"],
         ["6", "Automation surface: one-shot CLI with exit codes, structured "
               "JSON report export, repository git-tracked.", "Done"],
+        ["7", "Persistence: the investigation record survives CLI exits — "
+              "auto-saved on every mutation, REPL auto-resume, "
+              "/investigations, one-shot --resume/--out/--store-dir.", "Done"],
     ], [1.6 * cm, 11.4 * cm, 1.5 * cm]),
     PageBreak(),
 ]
@@ -333,6 +336,8 @@ GLM 5.3 (z-ai/glm-5.3)
         ["agent/investigation.py", "Investigation record: hypotheses, "
                                    "verdicts, evidence, report renderer "
                                    "(pure data)"],
+        ["agent/store.py", "InvestigationStore — one JSON file per record, "
+                           "atomic in-place writes, resume/list (Phase 7)"],
         ["tools/base.py", "Tool contract: Tool, ToolError, "
                           "read_command_output()"],
         ["tools/registry.py", "register/get_tools/execute_tool — tools are "
@@ -356,6 +361,9 @@ GLM 5.3 (z-ai/glm-5.3)
                                  "validation for all new domains"],
         ["tests/test_automation.py", "Offline suite: JSON reports + one-shot "
                                      "CLI (Phase 6)"],
+        ["tests/test_phase7.py", "Offline suite: round-trip serialization, "
+                                 "store files, auto-save, resume, CLI flags "
+                                 "(Phase 7)"],
     ], [5.4 * cm, 11.1 * cm], mono_cols=(0,)),
     PageBreak(),
 ]
@@ -799,9 +807,145 @@ def test_markdown_never_leaks_to_json_stdout(self):
     PageBreak(),
 ]
 
-# ---- 9. safety ------------------------------------------------------------- #
+# ---- 9. phase 7 ------------------------------------------------------------ #
 story += [
-    H1("9. How read-only is enforced (defense in depth)"),
+    H1("9. Phase 7 — Persistence"),
+    P("Phase 7 makes the investigation record durable: every mutation is "
+      "auto-saved to disk, so the record survives CLI exits. Storage lives in "
+      "~/.devops-ai-agent/investigations/ by default (overridable with "
+      "--store-dir or AGENT_STORE_DIR) — never inside a working directory, so "
+      "records never pollute a repo. Conversation history stays ephemeral by "
+      "design."),
+    H2("Round-trip serialization (agent/investigation.py)"),
+    P("render_report_json() is already a lossless view of the record, so "
+      "persistence reuses it: to_dict() adds schema and saved_at metadata, "
+      "and from_dict() rebuilds the record — tolerant of unknown keys, strict "
+      "about our own (a corrupt file raises, and the store turns that into "
+      "“skip this file” rather than a crash):"),
+    *code_text("""
+def to_dict(self, *, saved_at: str | None = None) -> dict:
+    \"\"\"Full serializable state, for the store to write to disk.\"\"\"
+    out = self.render_report_json()
+    out["schema"] = 1
+    if saved_at is not None:
+        out["saved_at"] = saved_at
+    return out
+
+@classmethod
+def from_dict(cls, data: dict) -> "Investigation":
+    \"\"\"Rebuild an Investigation from to_dict() output.\"\"\"
+    inv = cls(data["problem"])
+    for h in data.get("hypotheses") or []:
+        hyp = Hypothesis(
+            id=str(h.get("id", "")),
+            statement=str(h.get("statement", "")),
+            status="proposed",
+            notes=[str(n) for n in (h.get("notes") or [])],
+        )
+        hyp.set_status(str(h.get("status", "proposed")))
+        number = _id_number(hyp.id, "H")
+        if number is None:
+            raise InvestigationError(f"malformed hypothesis id {hyp.id!r}")
+        inv.hypotheses.append(hyp)
+        if number >= inv._next_h:
+            inv._next_h = number + 1
+    ...
+""", cap="agent/investigation.py — the record can now round-trip losslessly."),
+    H2("The store (agent/store.py)"),
+    P("One JSON file per investigation, written atomically (tmp file + "
+      "rename) into the store directory. Every save rewrites the active "
+      "record's file in place — the directory holds one file per "
+      "investigation, not per change, and a crash mid-investigation loses "
+      "nothing. Best-effort by design: an unwritable directory or corrupt "
+      "file degrades to None / a skipped file, never an exception."),
+    *code("agent/store.py"),
+    PageBreak(),
+    H2("The chokepoint wiring (tools/investigation.py)"),
+    P("All record mutations already funnel through start_investigation / "
+      "record / conclude_investigation / finish_investigation — shared by "
+      "tool executors and CLI commands. That is the only place persistence "
+      "needed wiring: each mutation calls _persist(), which appends a "
+      "one-line “(saved to …)” note to the tool result the model "
+      "sees, or a warning when the store is unavailable:"),
+    *code_text("""
+def _persist() -> str:
+    \"\"\"Auto-save the active record; returns a short note for the result text.\"\"\"
+    store = _get_store()
+    if store is None:
+        return ""
+    path = store.save(_active)
+    if path is None:
+        return "\\n(note: persistence unavailable — the record is not being saved)"
+    return f"\\n(saved to {path})"
+
+def resume_investigation() -> str | None:
+    \"\"\"Load the newest in-progress record from the store into memory.\"\"\"
+    global _active
+    if _active is not None:
+        return None
+    store = _get_store()
+    if store is None:
+        return None
+    inv = store.resume_latest()
+    if inv is None:
+        return None
+    _active = inv
+    return f"Resumed: {inv.problem} — /investigation to view, continue as before."
+""", cap="tools/investigation.py — save on every mutation, resume on startup."),
+    H2("CLI surface (main.py)"),
+    *bullets([
+        "--store-dir PATH — override the persistence directory for the run "
+        "(AGENT_STORE_DIR env also works).",
+        "--resume — one-shot: continue the newest in-progress record before "
+        "asking, so CI can pick up a prior run.",
+        "--out PATH — additionally write the JSON report to an exact path "
+        "(exit 1 if no investigation, same rule as --json).",
+        "REPL startup auto-resumes the newest in-progress record and prints "
+        "a one-line notice; /investigations (alias /history) lists saved "
+        "records, marking the live one.",
+        "Banner now shows the store directory: Store: <path>.",
+    ]),
+    H2("Phase 7 tests — still offline, hermetic"),
+    P("tests/test_phase7.py covers four layers: round-trip serialization, "
+      "store behavior (in-place updates, resume ordering, collision suffix, "
+      "corrupt/unwritable tolerance), chokepoint auto-save, and the CLI "
+      "flags. No test touches the real home directory — every store under "
+      "test points at a tempdir, and set_store(None) disables persistence "
+      "where it is not under test:"),
+    *code_text("""
+def test_save_updates_same_file_in_place(self):
+    inv = Investigation("one problem only")
+    first = self.store.save(inv)
+    inv.record_evidence("some evidence")
+    second = self.store.save(inv)
+    self.assertEqual(first, second)
+    self.assertEqual(list(Path(self.tmp).glob("*.json")), [first])
+    data = json.loads(first.read_text(encoding="utf-8"))
+    self.assertEqual(data["evidence"][0]["content"], "some evidence")
+
+def test_resume_latest_skips_concluded_and_corrupt(self):
+    self.store.save(Investigation("older in-progress"))
+    self.store.forget()
+    newer = Investigation("newer concluded")
+    newer.conclude(summary="s", root_cause="r", remediation=["x"],
+                   verification=["y"], confidence="low")
+    self.store.save(newer)
+    (Path(self.tmp) / "99999999-999999-garbage.json").write_text("{not json")
+    resumed = self.store.resume_latest()
+    self.assertIsNotNone(resumed)
+    self.assertEqual(resumed.problem, "older in-progress")
+
+def test_start_and_record_save_with_note(self):
+    result = inv_tools.start_investigation("api-5d6f stuck rollout")
+    self.assertIn("(saved to", result)
+    self.assertEqual(len(list(Path(self.tmp).glob("*.json"))), 1)
+""", cap="tests/test_phase7.py — persistence proven without a network."),
+    PageBreak(),
+]
+
+# ---- 10. safety ------------------------------------------------------------- #
+story += [
+    H1("10. How read-only is enforced (defense in depth)"),
     *bullets([
         "The tool schemas only allow picking names/counts/namespaces from "
         "validated arguments — there is no way to pass command text to any "
@@ -840,9 +984,9 @@ story += [
     PageBreak(),
 ]
 
-# ---- 10. testing ----------------------------------------------------------- #
+# ---- 11. testing ----------------------------------------------------------- #
 story += [
-    H1("10. Testing"),
+    H1("11. Testing"),
     P("Everything is offline: tests make no network calls and need no API "
       "key. Fake clients stand in for the model, and stub CLIs on PATH "
       "prove the exact argv the application builds. Real cluster/container "
@@ -862,6 +1006,10 @@ story += [
         ["tests/test_automation.py", "render_report_json shapes, agent "
                                      "delegates, parse_args, one-shot exit "
                                      "codes, JSON stdout purity"],
+        ["tests/test_phase7.py", "to_dict/from_dict round trip, store files "
+                                 "and resume, chokepoint auto-save, CLI "
+                                 "flags (--store-dir/--resume/--out), "
+                                 "/investigations"],
     ], [5.4 * cm, 11.1 * cm], mono_cols=(0,)),
     H2("Run the suite"),
     *code_text("""
@@ -871,9 +1019,9 @@ python -m unittest discover -s tests -v
 """, cap="Offline tests — no network, no API key needed."),
 ]
 
-# ---- 11. usage ------------------------------------------------------------- #
+# ---- 12. usage ------------------------------------------------------------- #
 story += [
-    H1("11. Installation and usage"),
+    H1("12. Installation and usage"),
     H2("Install"),
     *code_text("""
 cd ~/devops-ai-agent
@@ -902,17 +1050,34 @@ cp .env.example .env   # then edit: OPENROUTER_API_KEY=sk-or-...
     *code_text("""
 .venv/bin/python main.py "why is api-5d6f crash-looping?"
 .venv/bin/python main.py --json "why is api-5d6f crash-looping?"   # structured report
+.venv/bin/python main.py --resume --json "any update?"             # continue prior run
+.venv/bin/python main.py --store-dir /tmp/runs --out report.json "..."
 .venv/bin/python main.py /report                                   # slash commands work one-shot
 """, cap="One-shot mode — exit 0 on success, 1 on setup/API errors."),
+    H2("Persistence (Phase 7)"),
+    *bullets([
+        "Every record mutation auto-saves to ~/.devops-ai-agent/investigations/"
+        " — one JSON file per investigation, atomically updated in place.",
+        "The REPL resumes the newest in-progress record at startup; "
+        "/investigations lists saved records (the live one is marked).",
+        "/endinvestigation clears memory but keeps the saved file as history.",
+        "One-shot: --resume continues a prior run; --out writes the JSON "
+        "report to an exact path; --store-dir overrides the directory.",
+        "AGENT_STORE_DIR env var overrides the default location globally.",
+        "A broken store degrades to a warning in the tool result — it never "
+        "interrupts an investigation.",
+    ]),
+    H2("Example session"),
     P("With --json the stdout is one JSON document: problem, status, "
       "hypotheses, evidence, and — once concluded — conclusion with "
       "root_cause, remediation, verification, confidence. A pipeline can "
       "act on the verdict instead of parsing markdown."),
     H2("Example session"),
     *code_text("""
-DevOps AI Agent (Phase 6 — one-shot CLI, JSON reports, git-tracked)
+DevOps AI Agent (Phase 7 — persistent investigations)
 Model:   z-ai/glm-5.3
 Backend: https://openrouter.ai/api/v1
+Store:   /home/you/.devops-ai-agent/investigations
 Tools:   docker_images, docker_inspect, docker_logs, docker_ps, ...
 
 You: The checkout service container keeps exiting in Docker. Investigate.
@@ -928,9 +1093,9 @@ You: exit
     PageBreak(),
 ]
 
-# ---- 12. limitations & roadmap ---------------------------------------------- #
+# ---- 13. limitations & roadmap ---------------------------------------------- #
 story += [
-    H1("12. Current limitations"),
+    H1("13. Current limitations"),
     *bullets([
         "Each domain needs its CLI installed and reachable; missing CLIs, "
         "unauthenticated gh, a dead docker daemon, an uninitialized "
@@ -948,8 +1113,9 @@ story += [
         "run an arbitrary or mutating verb — by construction.",
         "Raw CLI output goes to the model (Python does not re-parse), "
         "truncated at 8,000 characters per result.",
-        "Short-term memory only: history and the investigation record live "
-        "in the process and are lost when the CLI exits.",
+        "Short-term conversation memory only: chat history lives in the "
+        "process and is lost when the CLI exits (the investigation record "
+        "itself persists — Phase 7).",
         "Hypothesis tracking is model-driven: the record is what the model "
         "chose to record through the investigation tools.",
         "No streaming, no retries/backoff yet.",
@@ -957,12 +1123,12 @@ story += [
         "will only be added behind an explicit human-approval gate, much "
         "later.",
     ]),
-    H1("13. Roadmap"),
+    H1("14. Roadmap"),
     table(["Phase", "Scope"], [
-        ["Later", "Cloud, monitoring/logging and CI/CD-platform tooling; "
-                  "streaming; persistence (the investigation record "
-                  "survives CLI exits); human-approval gate before any "
-                  "mutating action is ever allowed."],
+        ["Later", "More tool domains (cloud, monitoring/logging, CI/CD-"
+                  "platform tooling); streaming; conversation-history "
+                  "persistence; human-approval gate before any mutating "
+                  "action is ever allowed."],
         ["Phase 5 pending", "kubectl top (needs metrics-server), kubectl get "
                             "hpa/pvc, node resource usage, a kubectl "
                             "context selector."],

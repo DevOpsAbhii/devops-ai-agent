@@ -8,6 +8,12 @@ root cause + remediation + verification.
 These are the only "stateful" tools — and they mutate NOTHING outside the
 agent's own memory: no cluster, no files, no infrastructure. The read-only
 guarantee of the project is unaffected.
+
+Phase 7 adds persistence: every mutation is auto-saved (best-effort) to the
+InvestigationStore (agent/store.py), so the record survives CLI exits. The
+save hook lives here because all record mutations funnel through the shared
+functions below — tool executors and CLI commands are literally the same
+code path.
 """
 
 from agent.investigation import (
@@ -16,11 +22,53 @@ from agent.investigation import (
     Investigation,
     InvestigationError,
 )
+from agent.store import InvestigationStore, default_store
 from tools.base import Tool, ToolError
 from tools.registry import register
 
 # The single active investigation for this agent process (single-threaded CLI).
 _active: Investigation | None = None
+
+# Persistence (Phase 7): resolved lazily (explicit > AGENT_STORE_DIR > the
+# default home directory), disableable for tests. set_store(None) turns
+# persistence off; _get_store() otherwise resolves and caches a default.
+_store: InvestigationStore | None = None
+_store_disabled: bool = False
+
+
+def set_store(store: InvestigationStore | None) -> None:
+    """Replace the persistence store (tests pass None to disable saving)."""
+    global _store, _store_disabled
+    _store = store
+    _store_disabled = store is None
+
+
+def _get_store() -> InvestigationStore | None:
+    """The process store, or None when persistence is off/unavailable."""
+    global _store
+    if _store_disabled:
+        return None
+    if _store is None:
+        try:
+            _store = default_store()
+        except Exception:  # noqa: BLE001 — persistence must never break the agent
+            return None
+    return _store
+
+
+def _persist() -> str:
+    """Auto-save the active record; returns a short note for the result text.
+
+    Best-effort: an unavailable store returns "" (no note, no error) and a
+    failing save adds a one-line note instead of raising.
+    """
+    store = _get_store()
+    if store is None:
+        return ""
+    path = store.save(_active)
+    if path is None:
+        return "\n(note: persistence unavailable — the record is not being saved)"
+    return f"\n(saved to {path})"
 
 
 # --- thin functions shared by the CLI and the tool executors ---
@@ -37,6 +85,7 @@ def start_investigation(problem: str, hypotheses: list[str] | None = None) -> st
     return (
         "Investigation started.\n"
         + _active.render_status()
+        + _persist()
         + "\n\nTrack hypotheses and evidence with investigation_record, and "
           "finish with investigation_conclude."
     )
@@ -67,7 +116,7 @@ def record(
             )
     except InvestigationError as exc:
         raise ToolError(str(exc)) from exc
-    return result + "\n" + inv.render_status()
+    return result + "\n" + inv.render_status() + _persist()
 
 
 def conclude_investigation(
@@ -89,7 +138,7 @@ def conclude_investigation(
         )
     except InvestigationError as exc:
         raise ToolError(str(exc)) from exc
-    return result
+    return result + _persist()
 
 
 def status_text() -> str | None:
@@ -111,7 +160,52 @@ def finish_investigation() -> str:
     if _active is None:
         return "no active investigation"
     _active = None
+    store = _get_store()
+    if store is not None:
+        store.forget()  # clears memory only — the saved copy stays as history
     return "investigation cleared"
+
+
+def resume_investigation() -> str | None:
+    """Load the newest in-progress record from the store into memory.
+
+    Returns a short notice, or None when nothing was resumed (persistence
+    off, no saved in-progress record, or an investigation is already
+    active).
+    """
+    global _active
+    if _active is not None:
+        return None
+    store = _get_store()
+    if store is None:
+        return None
+    inv = store.resume_latest()
+    if inv is None:
+        return None
+    _active = inv
+    return f"Resumed: {inv.problem} — /investigation to view, continue as before."
+
+
+def list_saved_text() -> str | None:
+    """Rendered list of saved records, or None when there is nothing to show."""
+    store = _get_store()
+    if store is None:
+        return None
+    rows = store.list_saved()
+    if not rows:
+        return None
+    current = store.current_file
+    lines = ["**Saved investigations** (newest first)"]
+    for row in rows:
+        marker = "  <- active" if row["file"] == current else ""
+        lines.append(f"- [{row['status']}] {row['file']}{marker} — {row['problem']}")
+    return "\n".join(lines)
+
+
+def store_directory_text() -> str | None:
+    """Where records are being saved, or None when persistence is off."""
+    store = _get_store()
+    return str(store.directory) if store is not None else None
 
 
 def _require_active() -> Investigation:
