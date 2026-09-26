@@ -371,6 +371,30 @@ Swapping to another OpenRouter model later is a one-line change (an env var
 today); moving to any other OpenAI-compatible provider changes only
 `agent/agent.py` configuration.
 
+**Your model, your choice.** The default is baked in as a fallback, never a
+restriction — set `OPENROUTER_MODEL` (shell or `.env`) to any model on
+OpenRouter:
+
+```bash
+export OPENROUTER_MODEL=anthropic/claude-sonnet-5   # or openai/gpt-5.2, google/gemini-2.5-pro, ...
+```
+
+Two things to weigh when picking: the agent is a tool-use loop, so choose a
+model with solid function-calling (a chat-only model will answer from
+imagination instead of gathering evidence); and an investigation makes
+several model calls per run, so price-per-call multiplies — that is why the
+default is a cheap, reliable tool-caller rather than the biggest model.
+
+**No OpenRouter at all?** `OPENROUTER_BASE_URL` points the same client at
+any OpenAI-compatible endpoint — including a local one. Ollama, free and
+offline:
+
+```bash
+export OPENROUTER_BASE_URL=http://localhost:11434/v1
+export OPENROUTER_MODEL=llama3.2          # any Ollama model that does tools
+devopsiq "docker container checkout keeps exiting, investigate"
+```
+
 ## 5. Installation
 
 Three ways — pick one. Whatever you choose, the agent also needs the CLIs of
@@ -434,6 +458,27 @@ Recommended CLIs, by domain:
 | New Relic    | `curl` + `NEW_RELIC_API_KEY` / `NEW_RELIC_ACCOUNT_ID` env vars |
 | Ansible      | `ansible-inventory`, `ansible-playbook`          |
 
+### No API key? You still have the tools
+
+The model is the only part that needs a key — the agent builds without one
+(model-less mode), and two things keep working:
+
+- **Record commands**: `devopsiq /report`, `devopsiq /investigations`, and
+  the same commands inside the REPL, all work with no key configured. Only
+  actual questions exit 1 with the setup message naming `OPENROUTER_API_KEY`.
+- **The whole 58-tool layer** via the Python library, with no model and no
+  key (see INTEGRATION.md):
+
+```python
+import agent.agent                            # registers every tool
+from tools.registry import execute_tool
+
+print(execute_tool("k8s_pods", '{"namespace": "prod"}'))
+```
+
+And the fully key-free *agent* path is a local model (Ollama example in
+section 4 above) — no cloud account needed at all.
+
 ## 6. Environment setup
 
 ```bash
@@ -461,7 +506,9 @@ NEW_RELIC_ACCOUNT_ID=1234567                        # (Phase 9) numeric account 
 
 `.env` is gitignored; the API key is never hard-coded in Python, printed, or
 logged. If `OPENROUTER_API_KEY` is already set in your shell, the shell value
-wins and `.env` is not consulted. Kubernetes tools use kubectl's own config
+wins and `.env` is not consulted. Without any key the agent still starts in
+model-less mode (record commands + the tool layer — see "No API key?" in
+section 5). Kubernetes tools use kubectl's own config
 (`~/.kube/config` or `KUBECONFIG`); no agent-side config is needed.
 
 ## 7. How to run the agent

@@ -253,6 +253,13 @@ def main() -> int:
         print(f"[setup] {exc}", file=sys.stderr)
         return 1
 
+    if agent.client is None:
+        # Model-less mode: the REPL still starts — record commands (slash
+        # commands) work, only questions to the model are unavailable.
+        print(f"[setup] {agent.model_error}", file=sys.stderr)
+        print("[setup] Starting without a model — slash commands still work; "
+              "questions need OPENROUTER_API_KEY.", file=sys.stderr)
+
     tool_names = ", ".join(sorted(tool.name for tool in agent.tools)) or "none"
 
     print("DevOps AI Agent (Phase 9 — 58 read-only tools, persistent investigations)")

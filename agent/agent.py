@@ -80,23 +80,30 @@ class DevOpsAgent:
     ) -> None:
         # Configuration resolution order: explicit argument > environment > default.
         self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
-        if not self.api_key:
-            raise ValueError(
-                "OPENROUTER_API_KEY is not set. Copy .env.example to .env and "
-                "fill in your key, or export OPENROUTER_API_KEY in your shell."
-            )
-        if self.api_key.strip().lower() == PLACEHOLDER_KEY:
-            raise ValueError(
-                "OPENROUTER_API_KEY still has the placeholder value. Edit .env "
-                "and replace `your_key_here` with your real key."
-            )
 
         self.model = model or os.getenv("OPENROUTER_MODEL", DEFAULT_MODEL)
         self.base_url = base_url or os.getenv("OPENROUTER_BASE_URL", DEFAULT_BASE_URL)
 
-        # OpenRouter exposes an OpenAI-compatible API, so the official OpenAI
-        # SDK is a drop-in client — just pointed at OpenRouter's base URL.
-        self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+        # Model-less mode: a missing (or placeholder) key no longer blocks
+        # construction. Record operations (the slash commands) and the tool
+        # layer never call the model, so the agent builds with client=None
+        # and only the chat path (_complete) demands a working key.
+        self.client = None
+        self.model_error: str | None = None
+        if not self.api_key:
+            self.model_error = (
+                "OPENROUTER_API_KEY is not set. Copy .env.example to .env and "
+                "fill in your key, or export OPENROUTER_API_KEY in your shell."
+            )
+        elif self.api_key.strip().lower() == PLACEHOLDER_KEY:
+            self.model_error = (
+                "OPENROUTER_API_KEY still has the placeholder value. Edit .env "
+                "and replace `your_key_here` with your real key."
+            )
+        else:
+            # OpenRouter exposes an OpenAI-compatible API, so the official
+            # OpenAI SDK is a drop-in client — just pointed at the base URL.
+            self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
 
         # Short-term conversation history. Starts with the system prompt;
         # grows as user, model, and tool results exchange turns.
@@ -110,7 +117,8 @@ class DevOpsAgent:
 
         The message, any tool exchanges, and the final assistant reply are all
         kept in this session's history so the model retains context across
-        turns. Raises ValueError on empty input.
+        turns. Raises ValueError on empty input, or when no API key is
+        configured (model-less mode).
         """
         message = user_message.strip()
         if not message:
@@ -180,6 +188,10 @@ class DevOpsAgent:
         model again. Stops when the model answers in plain text, or when the
         iteration cap is reached.
         """
+        if self.client is None:
+            # Model-less construction: the first chat attempt is where the
+            # missing key finally surfaces, as a normal caught ValueError.
+            raise ValueError(self.model_error)
         for _ in range(MAX_TOOL_ITERATIONS):
             request: dict = {"model": self.model, "messages": self.messages}
             if self.tools:

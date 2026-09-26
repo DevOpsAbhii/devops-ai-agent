@@ -247,5 +247,58 @@ class OneShotCliTests(unittest.TestCase):
         json.loads(out)  # the entire stdout must be one valid JSON document
 
 
+class KeylessTests(unittest.TestCase):
+    """Model-less mode: no API key configured.
+
+    The agent must still construct (record commands + tool layer never call
+    the model); only the chat path raises, and the CLI reports it loudly.
+    """
+
+    def setUp(self):
+        self._old_key = os.environ.get("OPENROUTER_API_KEY")
+        os.environ.pop("OPENROUTER_API_KEY", None)
+        self.addCleanup(self._restore_key)
+        inv_tools.set_store(None)
+
+    def _restore_key(self):
+        os.environ.pop("OPENROUTER_API_KEY", None)
+        if self._old_key is not None:
+            os.environ["OPENROUTER_API_KEY"] = self._old_key
+        inv_tools.finish_investigation()
+        inv_tools.set_store(None)
+
+    def test_agent_constructs_without_a_key(self):
+        agent = DevOpsAgent()
+        self.assertIsNone(agent.client)
+        self.assertIn("OPENROUTER_API_KEY", agent.model_error)
+        self.assertTrue(agent.tools)  # the tool layer is fully usable
+
+    def test_placeholder_key_is_also_model_less(self):
+        os.environ["OPENROUTER_API_KEY"] = "your_key_here"
+        agent = DevOpsAgent()
+        self.assertIsNone(agent.client)
+        self.assertIn("placeholder", agent.model_error)
+
+    def test_ask_without_key_raises_loud(self):
+        agent = DevOpsAgent()
+        with self.assertRaises(ValueError) as ctx:
+            agent.ask("why is it down?")
+        self.assertIn("OPENROUTER_API_KEY", str(ctx.exception))
+
+    def test_oneshot_slash_command_works_without_key(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = main_module.run_one_shot("/report")
+        self.assertEqual(code, 0)
+        self.assertIn("(no investigation recorded)", out.getvalue())
+
+    def test_oneshot_question_without_key_exits_1(self):
+        err = io.StringIO()
+        with contextlib.redirect_stdout(err), contextlib.redirect_stderr(err):
+            code = main_module.run_one_shot("why is api-5d6f crash-looping?")
+        self.assertEqual(code, 1)
+        self.assertIn("OPENROUTER_API_KEY", err.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
