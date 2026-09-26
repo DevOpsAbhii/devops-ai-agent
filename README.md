@@ -373,10 +373,40 @@ today); moving to any other OpenAI-compatible provider changes only
 
 ## 5. Installation
 
-Requires **Python 3.10+** (built-in `venv`) and the CLIs of the domains you
-use — each tool reports its exact error if the CLI is missing, so the agent
-runs with whatever subset you have. The tool layer itself uses only the
-standard library; the OpenAI SDK and python-dotenv are the only Python
+Three ways — pick one. Whatever you choose, the agent also needs the CLIs of
+the domains you use (kubectl, docker, gh, … — each tool reports its exact
+error if its CLI is missing, so a partial install is fine).
+
+**From PyPI (no clone):**
+
+```bash
+pipx install devopsiq        # or: pip install devopsiq
+export OPENROUTER_API_KEY=sk-or-...
+devopsiq --json "why is api-5d6f crash-looping?"
+```
+
+The console command is `devopsiq`; the importable package is
+`agent` / `tools` / `main` (see INTEGRATION.md for library use).
+
+**Prebuilt Docker image (bundles kubectl, helm, gh, trivy, git, curl,
+docker CLI):**
+
+```bash
+docker run --rm \
+  -e OPENROUTER_API_KEY=sk-or-... \
+  -v "$HOME/.kube:/home/agent/.kube:ro" \
+  -v agent-records:/data \
+  ghcr.io/devopsabhii/devops-ai-agent --json "why is api-5d6f crash-looping?"
+```
+
+Images are multi-arch (amd64 + arm64), published on every `v*` tag
+(`:latest` tracks the newest release). Add
+`-v /var/run/docker.sock:/var/run/docker.sock` for the Docker/Compose tools.
+
+**From source (development):**
+
+Requires **Python 3.10+** (built-in `venv`). The tool layer itself uses only
+the standard library; the OpenAI SDK and python-dotenv are the only Python
 dependencies.
 
 ```bash

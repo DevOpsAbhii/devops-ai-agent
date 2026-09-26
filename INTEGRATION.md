@@ -20,6 +20,28 @@ at production with a real kubeconfig — the worst it can do is read.
 
 ### One-time setup
 
+**Fastest — install from PyPI (no clone):**
+
+```bash
+pipx install devopsiq        # or: pip install devopsiq
+export OPENROUTER_API_KEY=sk-or-...    # or put it in a .env next to your cwd
+devopsiq --json "why is api-5d6f crash-looping?"
+```
+
+**No-Python — prebuilt Docker image** (bundles kubectl, helm, gh, trivy,
+git, curl, docker CLI):
+
+```bash
+docker run --rm \
+  -e OPENROUTER_API_KEY=sk-or-... \
+  -v "$HOME/.kube:/home/agent/.kube:ro" \
+  -v agent-records:/data \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  ghcr.io/devopsabhii/devops-ai-agent --json "check the cluster"
+```
+
+**From source (development / contributing):**
+
 ```bash
 git clone https://github.com/DevOpsAbhii/devops-ai-agent.git
 cd devops-ai-agent
@@ -92,18 +114,22 @@ on:
 
 jobs:
   triage:
-    runs-on: [self-hosted, ops]   # needs kubectl/gh access — see notes
+    # prebuilt image — no checkout, no pip; the image bundles kubectl, helm,
+    # gh, trivy, git, curl and the docker CLI
+    runs-on: [self-hosted, ops]   # needs cluster access — see notes
+    container:
+      image: ghcr.io/devopsabhii/devops-ai-agent:latest
+      volumes:
+        - ${{ github.workspace }}:/w
+      options: --user root   # needed only to write the report into $GITHUB_WORKSPACE
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      # optional tool enablement, per runner:
+      # PROMETHEUS_URL / LOKI_URL / GRAFANA_URL / NEW_RELIC_API_KEY / NEW_RELIC_ACCOUNT_ID
     steps:
-      - uses: actions/checkout@v4
-        with: { repository: DevOpsAbhii/devops-ai-agent }
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
-      - run: pip install -r requirements.txt
       - name: Investigate
-        env:
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
-          python main.py --json --out report.json \
+          devopsiq --json --out /w/report.json \
             "${{ inputs.problem || 'check the cluster for anomalies' }}"
       - uses: actions/upload-artifact@v4
         with: { name: report, path: report.json }
@@ -113,7 +139,7 @@ jobs:
         run: |
           python - <<'EOF'
           import json, sys
-          r = json.load(open("report.json"))
+          r = json.load(open("/w/report.json"))
           c = r.get("conclusion")
           if not c or c["confidence"] == "low":
               sys.exit("low-confidence conclusion — escalate to a human")
@@ -122,14 +148,16 @@ jobs:
 ```
 
 Notes:
-- **Self-hosted runner**: the `ubuntu-latest` GitHub runner has no access
-  to *your* cluster; run this on a runner that has a kubeconfig (or scope
-  one to a read-only ServiceAccount — the agent only reads, but your
-  kubeconfig should still be least-privilege).
+- **Cluster access**: the `ubuntu-latest` GitHub runner has no access to
+  *your* cluster. Run on a self-hosted runner that has a kubeconfig (mounted
+  or baked at `$HOME/.kube/config` for the container's `agent` user), or
+  scope one to a read-only ServiceAccount — the agent only reads, but your
+  kubeconfig should still be least-privilege. For docker/compose tools,
+  mount `/var/run/docker.sock`.
 - **Secrets**: only `OPENROUTER_API_KEY` is needed for the model.
-  Monitoring/New Relic tools are enabled per-runner via
-  `PROMETHEUS_URL`/`LOKI_URL`/`GRAFANA_URL`/`NEW_RELIC_API_KEY`/
-  `NEW_RELIC_ACCOUNT_ID` env vars if you want them.
+  Monitoring/New Relic tools are enabled per-runner via the env vars above.
+- **Version pinning**: pin `:latest` to a release tag like
+  `ghcr.io/devopsabhii/devops-ai-agent:0.1.0` in production workflows.
 - The schedule cron here is off the `:00` mark on purpose (the agent
   itself recommends the same for its own scheduled jobs).
 
@@ -158,28 +186,33 @@ def investigate(problem: str) -> dict:
 
 ### Docker
 
-The agent itself ships no Dockerfile — it wants *your* cluster access,
-which is per-environment. A minimal pattern:
-
-```dockerfile
-FROM python:3.12-slim
-# add the CLIs you need (kubectl, docker.io, curl, ...):
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
-COPY . /app
-RUN pip install --no-cache-dir -r /app/requirements.txt
-WORKDIR /app
-ENTRYPOINT ["python", "main.py"]
-```
+The repo ships a prebuilt image at
+`ghcr.io/devopsabhii/devops-ai-agent` (multi-arch amd64+arm64, published on
+every `v*` release). It bundles kubectl, helm, gh, trivy, git, curl and the
+docker CLI, runs as a non-root `agent` user, and keeps investigation records
+in `/data` (`AGENT_STORE_DIR`) so they survive restarts — mount a volume
+there, plus your kubeconfig:
 
 ```bash
-docker build -t devops-ai-agent .
-# mount your kubeconfig + a volume for records:
 docker run --rm \
   -e OPENROUTER_API_KEY=sk-or-... \
-  -v "$HOME/.kube:/root/.kube:ro" \
-  -v agent-records:/root/.devops-ai-agent/investigations \
-  devops-ai-agent --json "why is api-5d6f crash-looping?"
+  -v "$HOME/.kube:/home/agent/.kube:ro" \
+  -v agent-records:/data \
+  ghcr.io/devopsabhii/devops-ai-agent --json "why is api-5d6f crash-looping?"
 ```
+
+Building your own layer on top (to add CLIs the image doesn't bundle —
+terraform, argocd, istioctl, aws/gcloud/az, ansible):
+
+```dockerfile
+FROM ghcr.io/devopsabhii/devops-ai-agent:latest
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends ansible \
+    && rm -rf /var/lib/apt/lists/*
+USER agent
+```
+
+The Dockerfile itself is in the repo if you want to build from source.
 
 ---
 

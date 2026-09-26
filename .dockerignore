@@ -1,0 +1,12 @@
+# Keep the build context small and secret-free.
+.git
+.gitignore
+.venv
+.pytest_cache
+__pycache__
+*.pyc
+.env
+DevOps_AI_Agent_Documentation.pdf
+docs
+tests
+.github

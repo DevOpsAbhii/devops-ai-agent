@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "devopsiq"
+version = "0.1.0"
+description = "A from-scratch, read-only AI agent that investigates real DevOps problems — Kubernetes, Docker, Helm, Argo CD, Istio, Terraform, GitHub Actions, cloud, New Relic and more."
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "DevOpsAbhii" }]
+requires-python = ">=3.10"
+keywords = [
+    "devops", "kubernetes", "docker", "helm", "argocd", "istio",
+    "terraform", "github-actions", "observability", "newrelic",
+    "incident-response", "root-cause-analysis", "ai-agent", "cli",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Systems Administration",
+    "Topic :: Software Development :: Debuggers",
+]
+dependencies = [
+    "openai>=1.40.0",
+    "python-dotenv>=1.0.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/DevOpsAbhii/devops-ai-agent"
+Repository = "https://github.com/DevOpsAbhii/devops-ai-agent"
+Issues = "https://github.com/DevOpsAbhii/devops-ai-agent/issues"
+
+[project.scripts]
+devopsiq = "main:main"
+
+[tool.setuptools]
+packages = ["agent", "tools"]
+py-modules = ["main"]
