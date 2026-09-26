@@ -16,6 +16,7 @@ __pycache__/
 
 # Generated documentation PDF
 DevOps_AI_Agent_Documentation.pdf
+DevOps_Release_Guide.pdf
 
 # Build artifacts (produced by `python -m build`, published by CI)
 dist/

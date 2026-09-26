@@ -210,6 +210,8 @@ story += [
         ["Language", "Python 3.10+ (stdlib tools + openai SDK + python-dotenv)"],
         ["Phases complete", "1 – 10  (Phase 10: Distribution — PyPI package + prebuilt Docker image)"],
         ["Tools", "58 real, read-only tools across 15 domains"],
+        ["Latest release", "v0.1.1 — devopsiq on PyPI + GHCR image "
+                           "(multi-arch), model-less mode included"],
         ["Generated", TODAY],
     ], [4.2 * cm, 12.3 * cm]),
     Spacer(1, 2.2 * cm),
@@ -267,6 +269,12 @@ story += [
         "(console command devopsiq) and a prebuilt multi-arch Docker image "
         "(ghcr.io/devopsabhii/devops-ai-agent) — both cut automatically by "
         "a tag-driven release workflow.",
+        "Runs without an API key (model-less mode): the agent constructs "
+        "with client=None, record commands (/report, /investigations) and "
+        "the whole tool layer work, and only the chat path raises — loudly "
+        "naming OPENROUTER_API_KEY. Any OpenAI-compatible endpoint works "
+        "instead of OpenRouter, including a local Ollama (OPENROUTER_BASE_URL "
+        "+ OPENROUTER_MODEL).",
     ]),
     H2("Read-only by design"),
     P("Every tool is a static, allowlisted command template — the model can "
@@ -1254,12 +1262,35 @@ story += [
         "no-investigation message, exited 0, showed the 58-tool banner, "
         "and runs as the non-root agent user.",
         "Full offline suite after Phase 10: 164 tests green.",
-        "Live: devopsiq 0.1.0 published on PyPI (wheel + sdist) via "
-        "Trusted Publishing; a fresh venv pip-installed devopsiq from "
-        "PyPI and ran it with no repo present; "
-        "ghcr.io/devopsabhii/devops-ai-agent:0.1.0 and :latest pull "
-        "anonymously and are amd64+arm64 manifest lists.",
+        "Live: devopsiq published on PyPI via Trusted Publishing; a fresh "
+        "venv pip-installs it and runs it with no repo present; "
+        "ghcr.io/devopsabhii/devops-ai-agent:0.1.0/:0.1.1 and :latest "
+        "pull anonymously and are amd64+arm64 manifest lists.",
     ]),
+    H2("After Phase 10 — v0.1.1: model-less mode"),
+    P("The first follow-up release changed one contract: a missing (or "
+      "placeholder) API key no longer blocks construction. DevOpsAgent "
+      "builds with client=None and stores model_error; the chat chokepoint "
+      "_complete() raises it as a normal ValueError on first use. "
+      "Consequences: /report, /investigations and the other record "
+      "commands work keyless in the REPL and one-shot (the REPL prints a "
+      "[setup] notice and starts anyway), the 58-tool library layer needs "
+      "no key at all, and an actual question still exits 1 with the same "
+      "loud setup message. Maintainers get a Release & update playbook "
+      "(docs/generate_release_guide.py → DevOps_Release_Guide.pdf): verify "
+      "a release (Actions run, PyPI JSON, fresh-venv smoke test, anonymous "
+      "GHCR manifest), the six-step change-and-tag flow, what each kind of "
+      "change touches, and fixes for the failure modes hit so far."),
+    *code_text("""
+# keyless, verified against the published 0.1.1 package:
+OPENROUTER_API_KEY= devopsiq /report      # (no investigation recorded), exit 0
+OPENROUTER_API_KEY= devopsiq "why?"       # [input] OPENROUTER_API_KEY is not
+                                          # set ... exit 1
+
+# not on OpenRouter? point the same client anywhere OpenAI-compatible:
+export OPENROUTER_BASE_URL=http://localhost:11434/v1
+export OPENROUTER_MODEL=llama3.2          # any tool-calling Ollama model
+""", cap="Model-less mode and local endpoints."),
     PageBreak(),
 ]
 
@@ -1341,7 +1372,10 @@ story += [
                                  "+ gh, name validation, pinned flags"],
         ["tests/test_automation.py", "render_report_json shapes, agent "
                                      "delegates, parse_args, one-shot exit "
-                                     "codes, JSON stdout purity"],
+                                     "codes, JSON stdout purity, model-less "
+                                     "mode (construction, lazy key error, "
+                                     "keyless slash command, exit 1 "
+                                     "question)"],
         ["tests/test_phase7.py", "to_dict/from_dict round trip, store files "
                                  "and resume, chokepoint auto-save, CLI "
                                  "flags (--store-dir/--resume/--out), "
@@ -1361,7 +1395,7 @@ story += [
 cd ~/devops-ai-agent
 source .venv/bin/activate
 python -m unittest discover -s tests -v
-# after Phase 10: 164 tests, OK (1 skipped as root)
+# after v0.1.1: 169 tests, OK (1 skipped as root)
 """, cap="Offline tests — no network, no API key needed."),
 ]
 
@@ -1401,6 +1435,18 @@ cp .env.example .env   # then edit: OPENROUTER_API_KEY=sk-or-...
       "monitoring; ansible-inventory / ansible-playbook for Ansible. Each "
       "tool reports its exact error if the CLI is missing, so the agent "
       "runs with whatever subset you have."),
+    H2("Model choice and model-less mode"),
+    *bullets([
+        "OPENROUTER_MODEL overrides the default model — any model on "
+        "OpenRouter; pick a tool-caller (the agent is a tool-use loop) and "
+        "mind that an investigation makes several calls per run.",
+        "OPENROUTER_BASE_URL points the same client at any "
+        "OpenAI-compatible endpoint — e.g. a local Ollama "
+        "(http://localhost:11434/v1) for a free, offline agent.",
+        "No key at all: the agent starts model-less — record commands and "
+        "the tool layer work; only questions exit 1 naming "
+        "OPENROUTER_API_KEY.",
+    ]),
     H2("Run interactively (REPL)"),
     *code_text("""
 .venv/bin/python main.py
@@ -1515,9 +1561,10 @@ story += [
                      "Publishing)."],
         ["Later", "Region-scoped cloud resources (ec2 describe-*, compute "
                   "instances list, ...) behind the same template pattern; "
-                  "streaming; conversation-history persistence; "
-                  "human-approval gate before any mutating action is ever "
-                  "allowed."],
+                  "streaming; conversation-history persistence; a --model "
+                  "flag + per-user config file (flag > config > env > "
+                  "default); human-approval gate before any mutating "
+                  "action is ever allowed."],
     ], [3.4 * cm, 13.1 * cm]),
     H2("Repository hygiene"),
     P("Phase 6 also git-tracked the project. .gitignore keeps secrets and "

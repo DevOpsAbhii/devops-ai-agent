@@ -26,7 +26,14 @@ from environment config), and Ansible listing (inventory, playbook tasks).
 open alerts over NerdGraph — credentials from env), Trivy image
 vulnerability scanning, Helm releases (list/status/history), Argo CD
 (GitOps app sync/health), Istio mesh proxy status, and Docker Compose
-(project and service listing). The repository is git-tracked.
+(project and service listing). **Phase 10 ships it as a product:** the
+[`devopsiq` package on PyPI](https://pypi.org/project/devopsiq/) and a
+prebuilt multi-arch Docker image (`ghcr.io/devopsabhii/devops-ai-agent`) —
+both cut automatically by pushing a `v*` tag (test gate → PyPI via Trusted
+Publishing + GHCR in parallel). **No API key? The agent still runs:** it
+starts in model-less mode — record commands (`/report`, `/investigations`)
+and the whole 58-tool layer work without a key; only questions to the model
+need one. The repository is git-tracked.
 Every phase still built from scratch — no LangChain, LangGraph,
 AutoGen, CrewAI, or MCP.
 
@@ -44,7 +51,7 @@ model is called, how conversation history flows, how tool selection +
 execution + evidence feedback work — instead of depending on a framework
 for it.
 
-In Phase 5 the agent:
+Today the agent:
 - holds a conversation with **GLM 5.3** through **OpenRouter**;
 - has **58 real, read-only tools** across fifteen domains: host facts,
   Kubernetes (12 tools), Linux system (4), Docker + Compose (10),
@@ -104,8 +111,8 @@ Module map:
 
 | Path                        | Responsibility                                              |
 | --------------------------- | ------------------------------------------------------------ |
-| `main.py`                   | REPL loop, one-shot CLI, environment loading, `/investigate` commands, error messages |
-| `agent/agent.py`            | `DevOpsAgent` — client, history, `ask()`, `_complete()` loop |
+| `main.py`                   | REPL loop, one-shot CLI, environment loading, `/investigate` commands, error messages, model-less start |
+| `agent/agent.py`            | `DevOpsAgent` — client (`None` = model-less mode), history, `ask()`, `_complete()` loop |
 | `agent/prompts.py`          | The system prompt (versioned/tested separately)              |
 | `agent/investigation.py`    | First-class investigation record: hypotheses, verdicts, evidence, report renderer (pure data) |
 | `agent/store.py`            | `InvestigationStore` — one JSON file per record, atomic writes, resume/list (Phase 7) |
@@ -134,6 +141,11 @@ Module map:
 | `tests/test_phase7.py`      | Offline suite: round-trip serialization, store files, auto-save, resume, CLI flags (Phase 7) |
 | `tests/test_phase8.py`      | Offline suite: argv templates + validation for the 21 Phase 8 tools (fake CLIs, env-based monitoring) |
 | `tests/test_phase9.py`      | Offline suite: New Relic env-credential + payload tests, trivy/helm/argocd/istio/compose argv templates (Phase 9) |
+| `pyproject.toml`            | Package `devopsiq`: metadata, MIT, console script `devopsiq = main:main` (Phase 10) |
+| `Dockerfile`                | Prebuilt image: slim base + kubectl/helm/trivy/gh + app, non-root, `/data` record store (Phase 10) |
+| `.github/workflows/release.yml` | Tag-driven release: test gate → PyPI (Trusted Publishing) + GHCR multi-arch (Phase 10) |
+| `docs/generate_pdf.py`      | Builds the project documentation PDF from live source |
+| `docs/generate_release_guide.py` | Builds the release & update playbook PDF |
 
 ### The tool-use loop
 
@@ -588,7 +600,7 @@ You: exit
 Type `exit` / `quit`, or press Ctrl-D / Ctrl-C to leave. Slash commands are
 handled locally and never reach the model.
 
-## 8. Current limitations (Phase 9)
+## 8. Current limitations
 
 - **Each domain needs its CLI installed and reachable.** Missing CLIs,
   unauthenticated `gh`, a dead docker daemon, an uninitialized terraform
@@ -673,8 +685,17 @@ handled locally and never reach the model.
   `helm_history` — reads only), Argo CD (`argocd_apps`,
   `argocd_app_status`), Istio (`istioctl_proxy_status`), Docker Compose
   (`docker_compose_ls`, `docker_compose_ps` — live-verified on this host).
+- **Phase 10 — distribution. ✅ Done.** The `devopsiq` package on PyPI
+  (console command `devopsiq`, MIT) and the prebuilt multi-arch GHCR image,
+  cut by a tag-driven release workflow: an offline test gate, then PyPI
+  (Trusted Publishing — no token in the repo) and GHCR (amd64 + arm64) in
+  parallel. **`v0.1.1` added model-less mode:** with no API key the agent
+  still constructs — record commands (`/report`, `/investigations`) and the
+  58-tool layer work; only model questions exit 1 with the setup message.
+  Verified end-to-end against the published package.
 - **Later — region-scoped cloud resources** (ec2 describe-*, compute
   instances list, ...) behind the same template pattern; more observability
   depth (New Relic dashboards/entities, Prometheus range queries); streaming;
-  conversation-history persistence; and a human-approval gate before any
-  mutating action is ever allowed.
+  conversation-history persistence; a `--model` flag plus a per-user config
+  file (flag > config > env > baked-in default); and a human-approval gate
+  before any mutating action is ever allowed.
