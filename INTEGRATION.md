@@ -245,7 +245,7 @@ around it (Slack/Teams/Telegram) by keeping the instance per channel/thread.
 
 ### Just the tool layer (no model, no API key)
 
-All 58 read-only tools work standalone — useful for dashboards, health
+All 61 read-only tools work standalone — useful for dashboards, health
 checks, or as a toolkit inside your own automation:
 
 ```python

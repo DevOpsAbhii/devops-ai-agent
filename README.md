@@ -5,7 +5,7 @@
 [![Release](https://github.com/DevOpsAbhii/devops-ai-agent/actions/workflows/release.yml/badge.svg)](https://github.com/DevOpsAbhii/devops-ai-agent/actions/workflows/release.yml)
 [![Docker](https://img.shields.io/badge/ghcr-devops--ai--agent-2496ED?logo=docker&logoColor=white)](https://github.com/DevOpsAbhii/devops-ai-agent/pkgs/container/devops-ai-agent)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-181%20offline-brightgreen)](https://github.com/DevOpsAbhii/devops-ai-agent/actions/workflows/release.yml)
+[![Tests](https://img.shields.io/badge/tests-234%20offline-brightgreen)](https://github.com/DevOpsAbhii/devops-ai-agent/actions/workflows/release.yml)
 
 An AI agent that investigates real DevOps problems. The end goal: ask it
 something like *"Why is my Kubernetes pod in CrashLoopBackOff?"* and have it
@@ -46,7 +46,7 @@ prebuilt multi-arch Docker image (`ghcr.io/devopsabhii/devops-ai-agent`) —
 both cut automatically by pushing a `v*` tag (test gate → PyPI via Trusted
 Publishing + GHCR in parallel). **No API key? The agent still runs:** it
 starts in model-less mode — record commands (`/report`, `/investigations`)
-and the whole 58-tool layer work without a key; only questions to the model
+and the whole 61-tool layer work without a key; only questions to the model
 need one. The repository is git-tracked.
 Every phase still built from scratch — no LangChain, LangGraph,
 AutoGen, CrewAI, or MCP.
@@ -71,7 +71,7 @@ for it.
 
 Today the agent:
 - holds a conversation with **GLM 5.3** through **OpenRouter**;
-- has **58 real, read-only tools** across fifteen domains: host facts,
+- has **61 real, read-only tools** across fifteen domains: host facts,
   Kubernetes (12 tools), Linux system (4), Docker + Compose (10),
   Terraform (3), Helm (3), Argo CD (2), Istio (1), security/Trivy (1),
   git/GitHub + Actions (7), cloud identity (4), monitoring/logging (3),
@@ -149,6 +149,8 @@ Module map:
 | `tools/newrelic.py`         | `newrelic_nrql` / `newrelic_alerts` — NerdGraph over curl, credentials from env only (Phase 9) |
 | `tools/git_ci.py`           | git status/log/diff + `gh_prs`, `gh_runs`, `gh_run_view`, `gh_workflows` (working directory) |
 | `tools/cloud.py`            | read-only cloud identity/listing: `aws_identity`, `gcloud_identity`, `az_account`, `az_groups` |
+| `tools/cloud_resources.py`  | read-only region-scoped compute listings: `aws_ec2_instances`, `gcloud_compute_instances`, `az_vm_list` (Phase 13) |
+| `tools/approval.py`         | human-approval gate + audit for future mutating tools (Phase 14) — default-deny chokepoint |
 | `tools/monitoring.py`       | `prom_query`, `loki_query`, `grafana_health` — endpoints from env config only |
 | `tools/ansible.py`          | `ansible_inventory`, `ansible_playbook_tasks` — listing modes only |
 | `tools/investigation.py`    | `investigation_begin` / `investigation_record` / `investigation_conclude` — meta-tools for the investigation record |
@@ -215,6 +217,7 @@ the CLI exposes it directly:
 | `/endinvestigation`      | Clear the record (memory only — the saved copy stays as history) |
 | `/conversations`         | List saved conversations on disk (newest first; `← active` marks the live one) |
 | `/newchat`               | Clear the conversation and close its saved copy (an active investigation is untouched) |
+| `/approvals [reset]`     | Show the approval audit (Phase 14); `reset` forgets session approvals |
 | `/model [<name>]`        | Show the active model, or save a default (config.json) and switch to it |
 
 The report the agent ends with and `/report` render are kept consistent by
@@ -292,6 +295,9 @@ arguments (names, counts, namespaces), never command text.
 |                  | `gcloud_identity`     | `gcloud config list --format=json`                   |
 |                  | `az_account`          | `az account show`                                    |
 |                  | `az_groups`           | `az group list`                                      |
+| Cloud resources  | `aws_ec2_instances`   | `aws ec2 describe-instances --region <region> --query <projection> --output json` |
+| (Phase 13)       | `gcloud_compute_instances` | `gcloud compute instances list --zones=<zone> --format=json(...)` |
+|                  | `az_vm_list`          | `az vm list -g <group> -d --output json`             |
 | Monitoring       | `prom_query`          | `curl <PROMETHEUS_URL>/api/v1/query?query=<urlencoded PromQL>` |
 |                  | `loki_query`          | `curl <LOKI_URL>/loki/api/v1/query?query=<urlencoded LogQL>&limit=<n>` |
 |                  | `grafana_health`      | `curl <GRAFANA_URL>/api/health`                      |
@@ -508,7 +514,7 @@ The model is the only part that needs a key — the agent builds without one
 - **Record commands**: `devopsiq /report`, `devopsiq /investigations`, and
   the same commands inside the REPL, all work with no key configured. Only
   actual questions exit 1 with the setup message naming `OPENROUTER_API_KEY`.
-- **The whole 58-tool layer** via the Python library, with no model and no
+- **The whole 61-tool layer** via the Python library, with no model and no
   key (see INTEGRATION.md):
 
 ```python
@@ -618,7 +624,7 @@ are identical in both modes.
 Example session:
 
 ```
-DevOps AI Agent (Phase 9 — 58 read-only tools, persistent investigations)
+DevOps AI Agent (Phase 14 — 61 read-only tools, persistent investigations)
 Model:   z-ai/glm-5.3
 Backend: https://openrouter.ai/api/v1
 Store:   /home/you/.devops-ai-agent/investigations
@@ -669,10 +675,11 @@ handled locally and never reach the model.
   a URL.
 - **`kubectl top` needs metrics-server.** Clusters without it return
   kubectl's exact error — honest, but no usage data.
-- **Cloud tools are identity-level only.** `aws_identity`,
-  `gcloud_identity`, `az_account`, `az_groups` answer "which account am I
-  looking at" but do not sweep region-scoped resources (ec2 describe-*,
-  compute instances list, ...) yet.
+- **Cloud resource tools are compute-listing only.** Phase 13 adds one
+  listing per cloud (`aws_ec2_instances`, `gcloud_compute_instances`,
+  `az_vm_list` — instances/VMs with state and IPs); storage, load
+  balancers, databases, and IAM resources are not swept. Both identity
+  and resource tools need their CLI installed and configured.
 - **Phase 9 tools need their CLIs.** `helm`, `argocd` (plus `argocd
   login`), `istioctl` and `trivy` are not bundled; without them those
   tools return the exact "not found" error. New Relic tools need
@@ -695,8 +702,11 @@ handled locally and never reach the model.
   retried before chunks start flowing (Phase 12 context: the connect/auth
   phase); a connection drop mid-stream surfaces as an error, since a
   partially streamed answer cannot be replayed cleanly.
-- **Read-only is enforced by construction today.** Mutating capabilities
-  will only be added behind an explicit human-approval gate, much later.
+- **Read-only is enforced by construction today.** No mutating tool exists;
+  the gate they must pass through is already in place (Phase 14): a tool
+  declared mutating has every call confirmed by the human operator
+  (default-deny when nobody can be asked), with a session audit under
+  `/approvals`.
 
 ## 9. Planned future phases
 
@@ -747,7 +757,7 @@ handled locally and never reach the model.
   (Trusted Publishing — no token in the repo) and GHCR (amd64 + arm64) in
   parallel. **`v0.1.1` added model-less mode:** with no API key the agent
   still constructs — record commands (`/report`, `/investigations`) and the
-  58-tool layer work; only model questions exit 1 with the setup message.
+  61-tool layer work; only model questions exit 1 with the setup message.
   Verified end-to-end against the published package.
 - **Model choice + resilient calls (v0.1.2). ✅ Done.** The model is
   set by a 4-rung ladder — `--model` flag > `/model`-saved config file
@@ -772,8 +782,20 @@ handled locally and never reach the model.
   byte-for-byte the same as before. Retries cover the connect/auth phase;
   a mid-stream drop surfaces as an error (a partial answer cannot be
   replayed cleanly).
-- **Later — region-scoped cloud resources** (ec2 describe-*, compute
-  instances list, ...) behind the same template pattern; more observability
-  depth (New Relic dashboards/entities, Prometheus range queries); and a
-  human-approval gate
-  before any mutating action is ever allowed.
+- **Phase 13 — region-scoped cloud resources. ✅ Done.** Three more
+  read-only tools (58 → 61): `aws_ec2_instances` (EC2 in one region, with
+  a `--query` projection), `gcloud_compute_instances` (one GCP zone), and
+  `az_vm_list` (one Azure resource group, with power state). The single
+  model-chosen argument per tool (region/zone/group name) is validated
+  against a strict pattern before any CLI runs; read-only verbs only.
+- **Phase 14 — human-approval gate. ✅ Done (scaffolding).** No mutating
+  tool exists yet, and now none can be added that bypasses approval:
+  `Tool(mutating=True)` routes every call through `tools/approval.py` —
+  the REPL asks the human at the terminal (y/N), one-shot mode and tests
+  auto-deny, one approval covers identical actions for the session, and
+  every decision lands in a session audit (`/approvals`) plus a JSONL
+  file next to the investigation store.
+- **Later — deeper cloud/observability reads** (storage, LBs, databases;
+  New Relic dashboards/entities, Prometheus range queries) behind the
+  same patterns; first real mutating tools behind the Phase 14 gate when
+  a use case earns them.

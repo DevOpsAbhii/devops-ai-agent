@@ -209,7 +209,7 @@ story += [
         ["Model", "GLM 5.3  (z-ai/glm-5.3) via OpenRouter"],
         ["Language", "Python 3.10+ (stdlib tools + openai SDK + python-dotenv)"],
         ["Phases complete", "1 – 10  (Phase 10: Distribution — PyPI package + prebuilt Docker image)"],
-        ["Tools", "58 real, read-only tools across 15 domains"],
+        ["Tools", "61 real, read-only tools across 15 domains"],
         ["Latest release", "v0.1.2 — devopsiq on PyPI + GHCR image "
                            "(multi-arch); model-less mode, model-choice "
                            "ladder, and retry/backoff on transient failures"],
@@ -248,7 +248,7 @@ story += [
     *bullets([
         "Holds a conversation with GLM 5.3 through OpenRouter's "
         "OpenAI-compatible endpoint.",
-        "Has 58 real, read-only tools across fifteen domains: host facts, "
+        "Has 61 real, read-only tools across fifteen domains: host facts, "
         "Kubernetes (12), Linux system (4), Docker + Compose (10), "
         "Terraform (3), Helm (3), Argo CD (2), Istio (1), Trivy (1), "
         "git/GitHub + Actions (7), cloud identity (4), monitoring/logging "
@@ -1261,7 +1261,7 @@ story += [
         "checked (agent/, tools/, main.py) and installed into a throwaway "
         "venv — devopsiq /report then ran from an unrelated cwd, exit 0.",
         "Local docker build; docker run with a dummy key printed the "
-        "no-investigation message, exited 0, showed the 58-tool banner, "
+        "no-investigation message, exited 0, showed the 61-tool banner, "
         "and runs as the non-root agent user.",
         "Full offline suite after Phase 10: 164 tests green.",
         "Live: devopsiq published on PyPI via Trusted Publishing; a fresh "
@@ -1276,7 +1276,7 @@ story += [
       "_complete() raises it as a normal ValueError on first use. "
       "Consequences: /report, /investigations and the other record "
       "commands work keyless in the REPL and one-shot (the REPL prints a "
-      "[setup] notice and starts anyway), the 58-tool library layer needs "
+      "[setup] notice and starts anyway), the 61-tool library layer needs "
       "no key at all, and an actual question still exits 1 with the same "
       "loud setup message. Maintainers get a Release & update playbook "
       "(docs/generate_release_guide.py → DevOps_Release_Guide.pdf): verify "
@@ -1523,7 +1523,7 @@ cp .env.example .env   # then edit: OPENROUTER_API_KEY=sk-or-...
       "act on the verdict instead of parsing markdown."),
     H2("Example session"),
     *code_text("""
-DevOps AI Agent (Phase 9 — 58 read-only tools, persistent investigations)
+DevOps AI Agent (Phase 14 — 61 read-only tools, persistent investigations)
 Model:   z-ai/glm-5.3
 Backend: https://openrouter.ai/api/v1
 Store:   /home/you/.devops-ai-agent/investigations
@@ -1563,10 +1563,9 @@ story += [
         "a message naming the variable — the agent never invents a URL.",
         "kubectl top needs metrics-server; clusters without it return "
         "kubectl's exact error — honest, but no usage data.",
-        "Cloud tools are identity-level only: which account/principal/"
-        "subscription am I looking at — region-scoped resource sweeps "
-        "(ec2 describe-*, compute instances list, ...) are not integrated "
-        "yet.",
+        "Cloud resource tools are compute-listing only: one listing per "
+        "cloud (EC2/GCP instances, Azure VMs with power state); storage, "
+        "load balancers, databases and IAM resources are not swept yet.",
         "The model can only select from the registered tools; it can never "
         "run an arbitrary or mutating verb — by construction.",
         "Raw CLI output goes to the model (Python does not re-parse), "
@@ -1579,9 +1578,9 @@ story += [
         "error.",
         "Hypothesis tracking is model-driven: the record is what the model "
         "chose to record through the investigation tools.",
-        "Read-only is enforced by construction today; mutating capabilities "
-        "will only be added behind an explicit human-approval gate, much "
-        "later.",
+        "Read-only is enforced by construction today; no mutating tool exists, "
+        "and the gate one must pass through is already in place (Phase 14: "
+        "operator confirmation, default-deny, session audit).",
     ]),
     H1("17. Roadmap"),
     table(["Phase", "Scope"], [
@@ -1618,10 +1617,24 @@ story += [
                      "history, persistence and one-shot mode are unchanged. "
                      "Retries cover the connect/auth phase; a mid-stream "
                      "drop surfaces as an error."],
-        ["Later", "Region-scoped cloud resources (ec2 describe-*, compute "
-                  "instances list, ...) behind the same template pattern; "
-                  "human-approval gate before any mutating "
-                  "action is ever allowed."],
+        ["Phase 13", "Region-scoped cloud resources (done): three more "
+                     "read-only tools (58 → 61) — aws_ec2_instances (one "
+                     "region, --query projection), gcloud_compute_"
+                     "instances (one zone), az_vm_list (one resource group, "
+                     "power state). The single model-chosen argument is "
+                     "validated before any CLI runs."],
+        ["Phase 14", "Human-approval gate (done, scaffolding): "
+                     "Tool(mutating=True) routes every call through "
+                     "tools/approval.py — REPL y/N confirmation, "
+                     "default-deny when nobody can be asked, session "
+                     "memory for identical actions, /approvals audit + "
+                     "JSONL trail. No mutating tool exists yet; none can "
+                     "now bypass the gate."],
+        ["Later", "Deeper cloud/observability reads (storage, LBs, "
+                  "databases; New Relic dashboards/entities, Prometheus "
+                  "range queries) behind the same patterns; first real "
+                  "mutating tools behind the Phase 14 gate when a use "
+                  "case earns them."],
     ], [3.4 * cm, 13.1 * cm]),
     H2("Repository hygiene"),
     P("Phase 6 also git-tracked the project. .gitignore keeps secrets and "
