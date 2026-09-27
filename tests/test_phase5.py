@@ -251,7 +251,7 @@ class RegistryTests(Phase5TestCase):
             "investigation_begin", "investigation_record", "investigation_conclude",
         }
         self.assertLessEqual(phase5_tools, names)
-        self.assertEqual(len(names), 58)
+        self.assertEqual(len(names), 61)
 
 
 if __name__ == "__main__":

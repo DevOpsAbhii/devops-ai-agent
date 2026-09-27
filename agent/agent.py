@@ -52,6 +52,7 @@ from tools import (  # noqa: F401 — side effect: each module registers its too
     ansible,
     argocd,
     cloud,
+    cloud_resources,
     docker,
     git_ci,
     helm,

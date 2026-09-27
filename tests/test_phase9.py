@@ -281,7 +281,7 @@ class RegistryPhase9Tests(Phase9TestCase):
             "docker_compose_ls", "docker_compose_ps",
         }
         self.assertLessEqual(expected, names)
-        self.assertEqual(len(names), 58)
+        self.assertEqual(len(names), 61)
 
 
 if __name__ == "__main__":

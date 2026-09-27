@@ -131,6 +131,10 @@ class ToolContractTests(unittest.TestCase):
                 # Docker Compose (Phase 9)
                 "docker_compose_ls",
                 "docker_compose_ps",
+                # Cloud resources (Phase 13)
+                "aws_ec2_instances",
+                "gcloud_compute_instances",
+                "az_vm_list",
             },
         )
 
