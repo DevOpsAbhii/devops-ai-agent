@@ -37,6 +37,14 @@ from openai import (
     RateLimitError,
 )
 
+from agent.chat_store import (
+    chat_directory_text,
+    close_conversation,
+    list_conversations_text,
+    load_resumable_conversation,
+    prune_messages,
+    save_conversation,
+)
 from agent.config import load_user_config
 from agent.prompts import SYSTEM_PROMPT
 from agent.store import InvestigationStore
@@ -62,7 +70,9 @@ from tools.investigation import (
     list_saved_text,
     report_json,
     report_text,
+    current_investigation_file,
     resume_investigation as load_resumable_investigation,
+    resume_investigation_file,
     set_store as set_investigation_store,
     start_investigation,
     status_text,
@@ -86,6 +96,11 @@ RETRY_BASE_DELAY = 2.0
 RETRY_MAX_DELAY = 60.0
 
 _sleep = time.sleep  # test seam: offline tests patch agent.agent._sleep
+
+# Streaming seam: where streamed text deltas are written. The REPL gets
+# tokens as the model writes them; tests patch agent.agent._emit.
+def _emit(text: str) -> None:
+    print(text, end="", flush=True)
 
 
 def _is_transient(exc: Exception) -> bool:
@@ -164,18 +179,26 @@ class DevOpsAgent:
             self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
 
         # Short-term conversation history. Starts with the system prompt;
-        # grows as user, model, and tool results exchange turns.
+        # grows as user, model, and tool results exchange turns. Phase 11
+        # makes it durable: auto-saved after every exchange and restored
+        # (with the investigation it was linked to) on the next run.
         self.messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+        # Name of the saved investigation the active conversation was linked
+        # to (set when a conversation is restored; None until then).
+        self._linked_investigation: str | None = None
 
         # Tools the model may call this session (read-only by construction).
         self.tools = get_tools()
 
-    def ask(self, user_message: str) -> str:
+    def ask(self, user_message: str, stream: bool = False) -> str:
         """Send one user message; run the tool-use loop; return the final answer.
 
         The message, any tool exchanges, and the final assistant reply are all
         kept in this session's history so the model retains context across
-        turns. Raises ValueError on empty input, or when no API key is
+        turns. With stream=True (the REPL), the model's text arrives via
+        _emit as it is generated — the full reply is still assembled and
+        returned. Raises ValueError on empty input, or when no API key is
         configured (model-less mode).
         """
         message = user_message.strip()
@@ -183,8 +206,9 @@ class DevOpsAgent:
             raise ValueError("Cannot send an empty user message.")
 
         self.messages.append({"role": "user", "content": message})
-        reply = self._complete()
+        reply = self._complete(stream=stream)
         self.messages.append({"role": "assistant", "content": reply})
+        self._autosave_conversation()
         return reply
 
     # --- investigation lifecycle (Phase 4) — thin CLI-facing delegates --------
@@ -237,14 +261,75 @@ class DevOpsAgent:
         """Point persistence at `directory` (--store-dir; tests use tmpdirs)."""
         set_investigation_store(InvestigationStore(directory))
 
-    def _complete(self) -> str:
+    # --- conversation persistence (Phase 11) — thin CLI-facing delegates -----
+    #
+    # The conversation is auto-saved at the end of every ask() (chat_store.py);
+    # these methods expose session restore, listing, and starting fresh to
+    # the CLI (REPL/one-shot auto-restore, /conversations, /newchat).
+
+    @property
+    def chat_dir(self) -> str | None:
+        """Directory conversations are saved to, or None when persistence is off."""
+        return chat_directory_text()
+
+    def _autosave_conversation(self) -> None:
+        """Auto-save the conversation after an exchange (silent, best-effort).
+
+        The saved file links to the investigation file active during the
+        exchange, so a later restore puts the pair back together.
+        """
+        save_conversation(self.messages, current_investigation_file())
+
+    def resume_session(self) -> str | None:
+        """Auto-restore the newest conversation, with its linked investigation.
+
+        The newest open conversation's messages replay into self.messages
+        (already pruned at save time), and the investigation file the
+        conversation was linked to is loaded back whatever its status. With
+        no conversation to restore, falls back to Phase 7 behavior: the
+        newest in-progress investigation only. Returns the notices to show,
+        or None when nothing was restored (persistence off, nothing open).
+        """
+        loaded = load_resumable_conversation()
+        if loaded is None:
+            return self.resume_investigation()
+        messages, investigation_file = loaded
+        self.messages = prune_messages(messages)
+        self._linked_investigation = investigation_file
+        notice = ("Conversation restored — continue where you left off "
+                  "(/conversations to list, /newchat to start fresh).")
+        if investigation_file:
+            resumed = resume_investigation_file(investigation_file)
+            if resumed:
+                notice += "\n" + resumed
+        return notice
+
+    def list_conversations(self) -> str | None:
+        """Saved conversations, newest first, or None if none."""
+        return list_conversations_text()
+
+    def new_chat(self) -> str:
+        """/newchat: clear history and close the saved conversation.
+
+        The saved copy stays on disk as history but will not auto-restore.
+        An active investigation is untouched (that is /endinvestigation).
+        """
+        close_conversation()
+        self._linked_investigation = None
+        self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        return ("New conversation — history cleared."
+                + (" The active investigation is untouched."
+                   if status_text() is not None else ""))
+
+    def _complete(self, stream: bool = False) -> str:
         """The tool-use loop — the single chokepoint where the backend is called.
 
         Each turn sends the full history (with tool schemas attached when tools
         are available). If the reply requests tools, every requested tool is
         executed locally, the results are appended, and the loop calls the
         model again. Stops when the model answers in plain text, or when the
-        iteration cap is reached.
+        iteration cap is reached. With stream=True each model call's text is
+        emitted as it arrives; tool exchanges still accumulate silently.
         """
         if self.client is None:
             # Model-less construction: the first chat attempt is where the
@@ -255,8 +340,11 @@ class DevOpsAgent:
             if self.tools:
                 request["tools"] = [tool.schema() for tool in self.tools]
 
-            response = self._call_model(request)
-            message = response.choices[0].message
+            response = self._call_model(request, stream=stream)
+            message = (
+                _consume_stream(response) if stream
+                else response.choices[0].message
+            )
 
             if not message.tool_calls:
                 content = message.content
@@ -277,7 +365,7 @@ class DevOpsAgent:
             f"The model did not finish after {MAX_TOOL_ITERATIONS} tool-use turns."
         )
 
-    def _call_model(self, request: dict):
+    def _call_model(self, request: dict, stream: bool = False):
         """One model call with bounded retries on transient failures.
 
         Timeouts, connection errors, rate limits (429) and server-side 5xx
@@ -285,14 +373,79 @@ class DevOpsAgent:
         (2s, 4s, 8s + jitter); a 429's Retry-After header wins when present.
         Client errors — a rejected key (401) most notably — fail immediately,
         because retrying the identical request cannot fix them.
+
+        With stream=True the call returns a chunk iterator; the retries cover
+        the request setup (connection, auth, 429 on connect) — a drop after
+        chunks started flowing is surfaced as-is, since replaying a partially
+        streamed answer is not something a retry can do cleanly.
         """
         for attempt in range(MAX_MODEL_RETRIES + 1):
             try:
-                return self.client.chat.completions.create(**request)
+                return self.client.chat.completions.create(**request, stream=stream)
             except Exception as exc:  # noqa: BLE001 — classified right below
                 if attempt >= MAX_MODEL_RETRIES or not _is_transient(exc):
                     raise
                 _sleep(_retry_delay(exc, attempt))
+
+
+def _consume_stream(stream) -> object:
+    """Drain a streamed response into a message-shaped object.
+
+    Text deltas are written through _emit as they arrive (the REPL's live
+    output) and accumulated into the final content; tool-call deltas are
+    accumulated silently by index (name, then argument fragments) and
+    reconstructed into the same .tool_calls shape the non-streaming path
+    reads. The returned object exposes .content and .tool_calls exactly
+    like the SDK's message, so the rest of the loop is unchanged.
+    """
+    from types import SimpleNamespace  # local: keeps the hot path cheap
+
+    content_parts: list[str] = []
+    calls: dict[int, dict] = {}
+    next_index = 0
+    for chunk in stream:
+        choices = getattr(chunk, "choices", None)
+        if not choices:
+            continue  # keep-alive / final usage chunks carry no delta
+        delta = choices[0].delta
+        text = getattr(delta, "content", None)
+        if text:
+            content_parts.append(text)
+            _emit(text)
+        for tc in (getattr(delta, "tool_calls", None) or []):
+            index = getattr(tc, "index", None)
+            if index is None:
+                index = next_index
+                next_index += 1
+            slot = calls.setdefault(
+                index,
+                {"id": "", "function": {"name": "", "arguments": ""}},
+            )
+            if getattr(tc, "id", None):
+                slot["id"] = tc.id
+            function = getattr(tc, "function", None)
+            if function is not None:
+                if getattr(function, "name", None):
+                    slot["function"]["name"] = function.name
+                if getattr(function, "arguments", None):
+                    slot["function"]["arguments"] += function.arguments
+
+    content = "".join(content_parts)
+    tool_calls = [
+        SimpleNamespace(
+            id=slot["id"],
+            type="function",
+            function=SimpleNamespace(
+                name=slot["function"]["name"],
+                arguments=slot["function"]["arguments"],
+            ),
+        )
+        for _, slot in sorted(calls.items())
+    ]
+    return SimpleNamespace(
+        content=content or None,
+        tool_calls=tool_calls or None,
+    )
 
 
 def _echo_tool_request(message) -> dict:

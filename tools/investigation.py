@@ -186,6 +186,33 @@ def resume_investigation() -> str | None:
     return f"Resumed: {inv.problem} — /investigation to view, continue as before."
 
 
+def resume_investigation_file(name: str) -> str | None:
+    """Load one specific saved record (by file name) into memory.
+
+    Used by session restore to put the investigation linked to a restored
+    conversation back into memory, whatever its status. Returns a short
+    notice, or None when it could not be loaded (persistence off, no such
+    file, or an investigation is already active).
+    """
+    global _active
+    if _active is not None:
+        return None
+    store = _get_store()
+    if store is None:
+        return None
+    inv = store.resume_file(name)
+    if inv is None:
+        return None
+    _active = inv
+    return f"Resumed: {inv.problem} — /investigation to view, continue as before."
+
+
+def current_investigation_file() -> str | None:
+    """Name of the file the active record auto-saves to, if any."""
+    store = _get_store()
+    return store.current_file if store is not None else None
+
+
 def list_saved_text() -> str | None:
     """Rendered list of saved records, or None when there is nothing to show."""
     store = _get_store()

@@ -101,6 +101,19 @@ class InvestigationStore:
                 return inv
         return None
 
+    def resume_file(self, name: str) -> Investigation | None:
+        """The record saved as `name`, any status (used by session restore,
+        which resumes the investigation linked to a conversation). Corrupt
+        and missing files yield None. Remembers the file on success."""
+        target = self.directory / name
+        if not target.is_file():
+            return None
+        inv = self._parse(self._read(target))
+        if inv is None:
+            return None
+        self._current_path = target
+        return inv
+
     def list_saved(self) -> list[dict]:
         """Every saved record, newest first: file, problem, status, saved_at."""
         rows = []

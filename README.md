@@ -23,7 +23,14 @@ the verdict instead of parsing markdown. **Phase 7 adds persistence:** the
 investigation record is auto-saved on every change to
 `~/.devops-ai-agent/investigations/` (overridable with `--store-dir` or
 `AGENT_STORE_DIR`), survives CLI exits, and the REPL resumes the newest
-in-progress record at startup. **Phase 8 broadens the tool surface to 47
+in-progress record at startup. **Phase 11 adds conversation persistence:**
+the chat itself (user turns, replies, tool exchanges) is auto-saved to
+`~/.devops-ai-agent/conversations/` (`AGENT_CHAT_DIR` overrides) and
+restored at startup together with the investigation it was linked to —
+you continue where you left off instead of re-explaining the problem.
+**Phase 12 adds streaming:** in the REPL the model's answer appears as it
+is written, token by token (one-shot mode stays buffered for pipelines).
+**Phase 8 broadens the tool surface to 47
 read-only tools:** Kubernetes depth (pod listing, `kubectl top` resource
 usage, HPAs, PVCs, contexts), Docker depth (networks, volumes, disk usage),
 GitHub Actions via `gh` (runs, run jobs, workflows), cloud identity
@@ -127,6 +134,7 @@ Module map:
 | `agent/prompts.py`          | The system prompt (versioned/tested separately)              |
 | `agent/investigation.py`    | First-class investigation record: hypotheses, verdicts, evidence, report renderer (pure data) |
 | `agent/store.py`            | `InvestigationStore` — one JSON file per record, atomic writes, resume/list (Phase 7) |
+| `agent/chat_store.py`       | `ChatStore` — one JSON file per conversation, atomic writes, turn-boundary pruning, resume/list (Phase 11) |
 | `tools/base.py`             | Tool contract: `Tool`, `ToolError`, `read_command_output()`  |
 | `tools/registry.py`         | `register/get_tools/execute_tool` — tools declared & executed here |
 | `tools/preflight.py`        | `system_info` — host facts (allowlisted read-only commands)  |
@@ -152,6 +160,8 @@ Module map:
 | `tests/test_phase7.py`      | Offline suite: round-trip serialization, store files, auto-save, resume, CLI flags (Phase 7) |
 | `tests/test_phase8.py`      | Offline suite: argv templates + validation for the 21 Phase 8 tools (fake CLIs, env-based monitoring) |
 | `tests/test_phase9.py`      | Offline suite: New Relic env-credential + payload tests, trivy/helm/argocd/istio/compose argv templates (Phase 9) |
+| `tests/test_phase11.py`     | Offline suite: conversation save/restore, linked investigations, pruning, /conversations, /newchat, --resume (Phase 11) |
+| `tests/test_phase12.py`     | Offline suite: streamed text/tool-call reassembly, keep-alive chunks, stream flag plumbing (Phase 12) |
 | `pyproject.toml`            | Package `devopsiq`: metadata, MIT, console script `devopsiq = main:main` (Phase 10) |
 | `Dockerfile`                | Prebuilt image: slim base + kubectl/helm/trivy/gh + app, non-root, `/data` record store (Phase 10) |
 | `.github/workflows/release.yml` | Tag-driven release: test gate → PyPI (Trusted Publishing) + GHCR multi-arch (Phase 10) |
@@ -203,6 +213,8 @@ the CLI exposes it directly:
 | `/investigations`        | List saved records on disk (newest first; `← active` marks the live one) |
 | `/report`                | Show the canonical report (once concluded)          |
 | `/endinvestigation`      | Clear the record (memory only — the saved copy stays as history) |
+| `/conversations`         | List saved conversations on disk (newest first; `← active` marks the live one) |
+| `/newchat`               | Clear the conversation and close its saved copy (an active investigation is untouched) |
 | `/model [<name>]`        | Show the active model, or save a default (config.json) and switch to it |
 
 The report the agent ends with and `/report` render are kept consistent by
@@ -527,6 +539,7 @@ Optional overrides (defaults shown):
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_MODEL=z-ai/glm-5.3
 AGENT_STORE_DIR=~/.devops-ai-agent/investigations   # (Phase 7) where records are saved
+AGENT_CHAT_DIR=~/.devops-ai-agent/conversations     # (Phase 11) where conversations are saved
 PROMETHEUS_URL=http://prometheus:9090               # (Phase 8) enables prom_query
 LOKI_URL=http://loki:3100                           # (Phase 8) enables loki_query
 GRAFANA_URL=http://grafana:3000                     # (Phase 8) enables grafana_health
@@ -569,18 +582,38 @@ and — once concluded — `conclusion` with `root_cause`, `remediation`,
 `--json`/`--out` fail with exit 1 rather than printing a malformed report.
 `--out PATH` additionally writes that JSON to an exact path for pipelines
 that want a known location; `--store-dir DIR` points persistence somewhere
-else for the run; `--resume` continues the newest in-progress record from
-the store before asking. Slash commands also work one-shot:
+else for the run; `--resume` restores the newest conversation — messages
+replay into the model's context, and the investigation the conversation was
+linked to comes back too (with no open conversation, it falls back to the
+newest in-progress record). Slash commands also work one-shot:
 `python main.py /report`.
 
 **Persistence (Phase 7):** every record mutation is auto-saved to
 `~/.devops-ai-agent/investigations/` — one JSON file per investigation,
 written atomically on every begin/record/conclude, so a crash mid-run
-loses nothing. The REPL resumes the newest *in-progress* record at startup
-(concluded records stay as history); `/investigations` lists everything on
+loses nothing. `/investigations` lists everything on
 disk; `/endinvestigation` clears memory but keeps the saved file. A broken
 store (permissions, full disk) degrades to a warning in the tool result —
 it never interrupts an investigation.
+
+**Conversation persistence (Phase 11):** every exchange is auto-saved to
+`~/.devops-ai-agent/conversations/` (`AGENT_CHAT_DIR` overrides) — one
+JSON file per conversation, written atomically after every answer, and
+linked to the investigation file that was active while it was written.
+At startup (and with `--resume`) the newest open conversation is restored
+into the model's context together with its linked investigation, so you
+continue where you left off. History is pruned at user-turn boundaries
+(system prompt + the newest 40 turns) so a restored session never replays
+an unbounded token load and a tool exchange is never split from its
+request. `/conversations` lists saved chats; `/newchat` clears history and
+closes the saved copy. Same best-effort guarantee as Phase 7: an unwritable
+directory degrades to a note, never an error.
+
+**Streaming (Phase 12):** in the REPL the answer is printed as the model
+writes it (`Agent: ` followed by live text), instead of appearing only
+after the full response. One-shot mode keeps the buffered behavior so
+pipelines get clean stdout; the tool-use loop, history, and persistence
+are identical in both modes.
 
 Example session:
 
@@ -589,6 +622,7 @@ DevOps AI Agent (Phase 9 — 58 read-only tools, persistent investigations)
 Model:   z-ai/glm-5.3
 Backend: https://openrouter.ai/api/v1
 Store:   /home/you/.devops-ai-agent/investigations
+Chats:   /home/you/.devops-ai-agent/conversations
 Tools:   ansible_inventory, ansible_playbook_tasks, aws_identity,
          az_account, az_groups, docker_disk_usage, docker_images,
          docker_inspect, docker_logs, docker_networks, docker_ps,
@@ -601,7 +635,7 @@ Tools:   ansible_inventory, ansible_playbook_tasks, aws_identity,
          k8s_top_nodes, k8s_top_pods, loki_query, prom_query,
          sys_open_ports, sys_service_logs, sys_service_status,
          sys_top_processes, system_info, tf_plan, tf_show, tf_state_list
-Commands: /investigate <problem>, /investigation, /investigations, /report, /endinvestigation, /model [<name>]
+Commands: /investigate <problem>, /investigation, /investigations, /report, /endinvestigation, /conversations, /newchat, /model [<name>]
 One-shot: python main.py [--json] [--resume] [--out report.json] [--store-dir DIR] [--model NAME] "<problem>"
 Type 'exit' to quit.
 
@@ -650,14 +684,17 @@ handled locally and never reach the model.
   an arbitrary verb of any CLI, or a mutating one — by construction.
 - **Raw CLI output to the model.** Python does not re-parse pod/docs/state;
   the model interprets real output, truncated at 8,000 characters per result.
-- **Conversation history is short-term only.** The investigation record
-  persists across CLI exits (Phase 7), but chat history still lives in the
-  process and is lost when the CLI exits.
+- **Restored conversation history is bounded.** Persistence keeps the
+  system prompt plus the newest 40 user turns (Phase 11); older context is
+  pruned at save time, not replayed.
 - **Hypothesis tracking is model-driven.** The record is what the model
   chose to record through the investigation tools; the live tracker returned
   on every record call is designed to keep that complete, but it is still
   the model's discipline.
-- **No streaming, no retries/backoff** yet.
+- **Streaming has no mid-stream retry.** Transient model-call failures are
+  retried before chunks start flowing (Phase 12 context: the connect/auth
+  phase); a connection drop mid-stream surfaces as an error, since a
+  partially streamed answer cannot be replayed cleanly.
 - **Read-only is enforced by construction today.** Mutating capabilities
   will only be added behind an explicit human-approval gate, much later.
 
@@ -718,8 +755,25 @@ handled locally and never reach the model.
   default — and transient model-call failures (timeouts, connection
   errors, 429s, 5xx) retry with exponential backoff (2s→4s→8s + jitter,
   honoring a 429's Retry-After); a rejected key fails immediately.
+- **Phase 11 — conversation persistence. ✅ Done.** The chat survives CLI
+  exits too: one JSON file per conversation in
+  `~/.devops-ai-agent/conversations/` (`AGENT_CHAT_DIR` overrides), written
+  atomically after every exchange and linked to the investigation file
+  active while it was written. At startup (REPL and one-shot `--resume`)
+  the newest open conversation replays into the model's context together
+  with its linked investigation; with none open, the Phase 7 investigation
+  fallback applies. History prunes at user-turn boundaries (system prompt +
+  newest 40 turns); `/conversations` lists saved chats; `/newchat` clears
+  history and closes the copy. All offline tested.
+- **Phase 12 — streaming. ✅ Done.** In the REPL the answer streams to the
+  terminal as the model writes it (`agent.ask(..., stream=True)`); the
+  streamed chunks reassemble into the same message shape the loop already
+  reads, so tool calls, history, persistence, and one-shot mode are
+  byte-for-byte the same as before. Retries cover the connect/auth phase;
+  a mid-stream drop surfaces as an error (a partial answer cannot be
+  replayed cleanly).
 - **Later — region-scoped cloud resources** (ec2 describe-*, compute
   instances list, ...) behind the same template pattern; more observability
-  depth (New Relic dashboards/entities, Prometheus range queries); streaming;
-  conversation-history persistence; and a human-approval gate
+  depth (New Relic dashboards/entities, Prometheus range queries); and a
+  human-approval gate
   before any mutating action is ever allowed.

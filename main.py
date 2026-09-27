@@ -18,10 +18,13 @@ output is the tracked investigation as JSON (see agent/investigation.py:
 render_report_json) instead of the markdown report, so a pipeline can act
 on the verdict. --out additionally writes that JSON to an exact path.
 Phase 7: the investigation record is auto-saved on every change
-(~/.devops-ai-agent/investigations/ by default) and survives CLI exits; the
-REPL resumes the newest in-progress record at startup. Slash commands work
-in both modes (/investigate, /investigations, /report, ...). Read-only:
-nothing here ever mutates a real system.
+(~/.devops-ai-agent/investigations/ by default) and survives CLI exits.
+Phase 11: the conversation is auto-saved too (~/.devops-ai-agent/conversations/,
+AGENT_CHAT_DIR overrides) and restored at startup together with the
+investigation it was linked to — you continue where you left off instead of
+re-explaining the problem. /conversations lists saved chats; /newchat starts
+fresh. Slash commands work in both modes (/investigate, /investigations,
+/report, ...). Read-only: nothing here ever mutates a real system.
 
 Type `exit` (or `quit`, or Ctrl-D / Ctrl-C) to leave the REPL.
 """
@@ -58,6 +61,9 @@ COMMAND_ALIASES = {
     "/endinvestigation": "/endinvestigation",
     "/end": "/endinvestigation",
     "/model": "/model",
+    "/conversations": "/conversations",
+    "/newchat": "/newchat",
+    "/new": "/newchat",
 }
 
 
@@ -85,11 +91,15 @@ def handle_command(text: str, agent: DevOpsAgent) -> str | None:
         return agent.investigation_report_text() or "(no investigation recorded)"
     if canonical == "/endinvestigation":
         return agent.end_investigation()
+    if canonical == "/conversations":
+        return agent.list_conversations() or "(no saved conversations yet)"
+    if canonical == "/newchat":
+        return agent.new_chat()
     if canonical == "/model":
         return handle_model_command(rest, agent)
     return (f"unknown command: {cmd}. Try /investigate <problem>, "
             "/investigation, /investigations, /report, /endinvestigation, "
-            "/model")
+            "/conversations, /newchat, /model")
 
 
 def handle_model_command(rest: str, agent: DevOpsAgent) -> str:
@@ -201,7 +211,7 @@ def run_one_shot(
     if store_dir is not None:
         agent.use_store_dir(store_dir)
     if resume:
-        agent.resume_investigation()
+        agent.resume_session()
 
     if task.startswith("/"):
         print(handle_command(task, agent))
@@ -298,17 +308,19 @@ def main() -> int:
     print(f"Model:   {agent.model}")
     print(f"Backend: {agent.base_url}")
     print(f"Store:   {agent.store_dir or '(persistence off)'}")
+    print(f"Chats:   {agent.chat_dir or '(conversation persistence off)'}")
     print(f"Tools:   {tool_names}")
     print("Commands: /investigate <problem>, /investigation, /investigations, "
-          "/report, /endinvestigation, /model [<name>]")
+          "/report, /endinvestigation, /conversations, /newchat, /model [<name>]")
     print("One-shot: python main.py [--json] [--resume] [--out report.json] "
           "[--store-dir DIR] [--model NAME] \"<problem>\"")
     print("Type 'exit' to quit.")
     print()
 
-    # Phase 7: pick up the newest in-progress record so a previous session's
-    # work is not lost (fresh investigations start with /investigate as usual).
-    resumed = agent.resume_investigation()
+    # Phase 7/11: pick up the newest conversation (and its linked
+    # investigation) — or, when none is open, the newest in-progress record —
+    # so a previous session's work and context are not lost.
+    resumed = agent.resume_session()
     if resumed:
         print(resumed)
         print()
@@ -333,16 +345,17 @@ def main() -> int:
             continue
 
         try:
-            reply = agent.ask(text)
+            # The REPL streams: the answer appears as the model writes it.
+            print("Agent: ", end="", flush=True)
+            reply = agent.ask(text, stream=True)
         except ValueError as exc:
-            print(f"[input] {exc}")
+            print(f"\n[input] {exc}")
             continue
         except Exception as exc:  # noqa: BLE001 — top-level safety net
-            print(f"[error] {describe_error(exc)}")
+            print(f"\n[error] {describe_error(exc)}")
             continue
 
-        print(f"Agent: {reply}")
-        print()
+        print("\n")
 
 
 if __name__ == "__main__":

@@ -865,8 +865,9 @@ story += [
       "auto-saved to disk, so the record survives CLI exits. Storage lives in "
       "~/.devops-ai-agent/investigations/ by default (overridable with "
       "--store-dir or AGENT_STORE_DIR) — never inside a working directory, so "
-      "records never pollute a repo. Conversation history stays ephemeral by "
-      "design."),
+      "records never pollute a repo. Conversation history gains its own "
+      "durable store in Phase 11 (agent/chat_store.py — conversations/, "
+      "restored together with the linked investigation)."),
     H2("Round-trip serialization (agent/investigation.py)"),
     P("render_report_json() is already a lossless view of the record, so "
       "persistence reuses it: to_dict() adds schema and saved_at metadata, "
@@ -1570,12 +1571,14 @@ story += [
         "run an arbitrary or mutating verb — by construction.",
         "Raw CLI output goes to the model (Python does not re-parse), "
         "truncated at 8,000 characters per result.",
-        "Short-term conversation memory only: chat history lives in the "
-        "process and is lost when the CLI exits (the investigation record "
-        "itself persists — Phase 7).",
+        "Restored conversation history is bounded: persistence keeps the "
+        "system prompt plus the newest 40 user turns (pruned at save time, "
+        "not replayed).",
+        "Streaming has no mid-stream retry: transient failures are retried "
+        "before chunks start flowing; a drop mid-stream surfaces as an "
+        "error.",
         "Hypothesis tracking is model-driven: the record is what the model "
         "chose to record through the investigation tools.",
-        "No streaming yet (retries with exponential backoff are in).",
         "Read-only is enforced by construction today; mutating capabilities "
         "will only be added behind an explicit human-approval gate, much "
         "later.",
@@ -1598,9 +1601,25 @@ story += [
                     "OPENROUTER_MODEL > default) and bounded retries with "
                     "exponential backoff on transient model-call failures "
                     "(timeouts, connection errors, 429, 5xx)."],
+        ["Phase 11", "Conversation persistence (done): the chat survives "
+                     "CLI exits — one JSON file per conversation in "
+                     "~/.devops-ai-agent/conversations/ (AGENT_CHAT_DIR "
+                     "overrides), written atomically after every exchange "
+                     "and linked to the investigation file active while it "
+                     "was written. Startup auto-restore replays the newest "
+                     "open conversation and loads its linked investigation; "
+                     "history prunes at user-turn boundaries (system prompt "
+                     "+ newest 40 turns); /conversations lists saved chats; "
+                     "/newchat clears history."],
+        ["Phase 12", "Streaming (done): in the REPL the answer appears as "
+                     "the model writes it (agent.ask(..., stream=True)); "
+                     "streamed tool-call fragments reassemble into the same "
+                     "message shape the loop already reads, so tool use, "
+                     "history, persistence and one-shot mode are unchanged. "
+                     "Retries cover the connect/auth phase; a mid-stream "
+                     "drop surfaces as an error."],
         ["Later", "Region-scoped cloud resources (ec2 describe-*, compute "
                   "instances list, ...) behind the same template pattern; "
-                  "streaming; conversation-history persistence; "
                   "human-approval gate before any mutating "
                   "action is ever allowed."],
     ], [3.4 * cm, 13.1 * cm]),

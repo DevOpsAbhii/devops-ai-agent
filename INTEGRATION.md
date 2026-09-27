@@ -85,9 +85,9 @@ workstation. The tools execute locally.
 | `--json` stdout | One JSON document: `problem`, `status` (`in_progress`/`concluded`), `hypotheses[]`, `evidence[]`, and once concluded `conclusion` with `root_cause`, `remediation[]`, `verification[]`, `confidence` |
 | `--out PATH` | Writes that same JSON to an exact file (for pipelines that want a known location); stdout stays the human-readable report |
 | `--store-dir DIR` | Where investigation records auto-save for this run (env: `AGENT_STORE_DIR`; default `~/.devops-ai-agent/investigations/`) |
-| `--resume` | Load the newest in-progress record from the store before asking |
+| `--resume` | Restore the newest conversation (messages replay into the model's context, and its linked investigation record loads back); with no open conversation, falls back to the newest in-progress record |
 | `--model NAME` | Override the model for this run (highest model precedence; then `~/.devops-ai-agent/config.json`, then `OPENROUTER_MODEL`, then the built-in default) |
-| Slash commands | Work one-shot too: `python main.py /report`, `/investigations`, `/model`, … |
+| Slash commands | Work one-shot too: `python main.py /report`, `/investigations`, `/conversations`, `/model`, … |
 | Retries | Transient model-call failures (timeouts, connection errors, 429s honoring `Retry-After`, 5xx) retry up to 3× with exponential backoff 2s→4s→8s + jitter before surfacing; client 4xx (a rejected key, most notably) fail immediately. Budget for ~15s of retry delay in your subprocess `timeout=` |
 
 The JSON shape is `render_report_json()` in `agent/investigation.py` —
@@ -322,6 +322,7 @@ environment config only, pinned curl argv, percent-encoded queries.
 | `OPENROUTER_MODEL` | model choice | default `z-ai/glm-5.3`; any OpenRouter model, one line |
 | `AGENT_CONFIG_FILE` | model-preference file | override for `~/.devops-ai-agent/config.json` (the `/model` command's save target); tests use tmp paths |
 | `AGENT_STORE_DIR` | record persistence | default `~/.devops-ai-agent/investigations/` |
+| `AGENT_CHAT_DIR` | conversation persistence | default `~/.devops-ai-agent/conversations/`; conversations auto-save after every exchange and auto-restore at startup |
 | `PROMETHEUS_URL` | `prom_query` | http(s) endpoint |
 | `LOKI_URL` | `loki_query` | http(s) endpoint |
 | `GRAFANA_URL` | `grafana_health` | http(s) endpoint |
