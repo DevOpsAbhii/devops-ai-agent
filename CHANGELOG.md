@@ -6,6 +6,14 @@ versions follow [SemVer](https://semver.org/). Each version is published
 automatically when its `vX.Y.Z` tag is pushed (see
 `.github/workflows/release.yml`): PyPI + a multi-arch Docker image.
 
+## [0.1.3] — 2026-09-27
+
+### Changed
+- Documentation only: feedback-only GitHub issue templates, release
+  playbook updated (github-release job, v0.1.2→0.1.3 flow), INTEGRATION.md
+  documents `--model`, `AGENT_CONFIG_FILE`, and the retry behavior.
+  No code changes.
+
 ## [0.1.2] — 2026-09-26
 
 ### Added
