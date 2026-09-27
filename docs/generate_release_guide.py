@@ -182,7 +182,7 @@ story += [
     ]),
     P("The version it publishes comes from one place: the version = field "
       "in pyproject.toml. The tag name and the pyproject version must "
-      "match (v0.1.4 ↔ 0.1.4) — the workflow's test job verifies this "
+      "match (v0.1.6 ↔ 0.1.6) — the workflow's test job verifies this "
       "before anything runs (see section 5), so a mismatched tag fails "
       "fast and publishes nothing."),
     PageBreak(),
@@ -212,8 +212,8 @@ gh run view <run-id> --json status,conclusion,jobs \\
 curl -s https://pypi.org/pypi/devopsiq/json | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
-print('latest:', d['info']['version'])          # → 0.1.4
-print('all:   ', sorted(d['releases'].keys()))  # → ['0.1.0', '0.1.1', '0.1.2', '0.1.3', '0.1.4']
+print('latest:', d['info']['version'])          # → 0.1.6
+print('all:   ', sorted(d['releases'].keys()))  # → ['0.1.0', ..., '0.1.6']
 "
 
 # or just open:  https://pypi.org/project/devopsiq/
@@ -257,7 +257,7 @@ docker pull ghcr.io/devopsabhii/devops-ai-agent:X.Y.Z
 story += [
     H1("3. Change something and release it — step by step"),
     P("The whole loop, from edit to verified release. Version numbers below "
-      "assume the current release is 0.1.4 and the next one is 0.1.5 — "
+      "assume the current release is 0.1.6 and the next one is 0.1.7 — "
       "bump the patch digit for fixes, the minor digit for features."),
     H2("Step 1 — make your change"),
     *code_text("""
@@ -269,7 +269,7 @@ git diff            # review the actual edits
     H2("Step 2 — run the tests (the same gate CI will run)"),
     *code_text("""
 .venv/bin/python -m unittest discover -s tests
-#   → "Ran 211 tests ... OK"   (1 skip is expected when running as root)
+#   → "Ran 234 tests ... OK"   (1 skip is expected when running as root)
 
 # if you added behavior, add tests next to the existing pattern first:
 #   tests/test_phaseN.py / tests/test_automation.py — offline, stub CLIs
@@ -282,17 +282,17 @@ git push
 """, cap="Write commit messages for future-you: what changed and why."),
     H2("Step 4 — bump the version in pyproject.toml"),
     *code_text("""
-sed -i 's/^version = "0.1.4"/version = "0.1.5"/' pyproject.toml
-grep -n '^version' pyproject.toml     # confirm: version = "0.1.5"
+sed -i 's/^version = "0.1.6"/version = "0.1.7"/' pyproject.toml
+grep -n '^version' pyproject.toml     # confirm: version = "0.1.7"
 
 git add pyproject.toml
-git commit -m "Bump version to 0.1.5 for release"
+git commit -m "Bump version to 0.1.7 for release"
 git push
-""", cap="Tag name and this version must agree: tag v0.1.5 ↔ version 0.1.5."),
+""", cap="Tag name and this version must agree: tag v0.1.7 ↔ version 0.1.7."),
     H2("Step 5 — tag and push the tag (this triggers the release)"),
     *code_text("""
-git tag v0.1.5
-git push origin v0.1.5
+git tag v0.1.7
+git push origin v0.1.7
 """, cap="Pushing the tag is the release button. Nothing publishes without it."),
     H2("Step 6 — watch the run, then verify (section 2)"),
     *code_text("""
@@ -396,13 +396,13 @@ cd ~/devops-ai-agent
 # ...edit files...
 .venv/bin/python -m unittest discover -s tests        # green first
 git add <files> && git commit -m "the change" && git push
-sed -i 's/^version = "0.1.4"/version = "0.1.5"/' pyproject.toml
-git add pyproject.toml && git commit -m "Bump version to 0.1.5" && git push
-git tag v0.1.5 && git push origin v0.1.5              # ← the release button
+sed -i 's/^version = "0.1.6"/version = "0.1.7"/' pyproject.toml
+git add pyproject.toml && git commit -m "Bump version to 0.1.7" && git push
+git tag v0.1.7 && git push origin v0.1.7              # ← the release button
 gh run watch $(gh run list --workflow=release.yml --limit 1 -q '.[0].databaseId') \\
   --exit-status
-curl -s https://pypi.org/pypi/devopsiq/json | grep -o '"0.1.5"'
-docker pull ghcr.io/devopsabhii/devops-ai-agent:0.1.5
+curl -s https://pypi.org/pypi/devopsiq/json | grep -o '"0.1.7"'
+docker pull ghcr.io/devopsabhii/devops-ai-agent:0.1.7
 """, cap="Everything above, condensed to eight lines."),
     Spacer(1, 0.4 * cm),
     Paragraph("Release & update playbook — generated from the repository on "
