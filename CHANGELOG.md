@@ -6,6 +6,43 @@ versions follow [SemVer](https://semver.org/). Each version is published
 automatically when its `vX.Y.Z` tag is pushed (see
 `.github/workflows/release.yml`): PyPI + a multi-arch Docker image.
 
+## [0.1.6] — 2026-09-27
+
+### Added
+- **Region-scoped cloud resources (Phase 13)**: three more read-only tools
+  (58 → 61) answering "what compute runs here" — `aws_ec2_instances` (EC2
+  in one region, with a `--query` projection: id, type, state, AZ, private
+  IP, Name tag), `gcloud_compute_instances` (one GCP zone: name, machine
+  type, internal IP, status), and `az_vm_list` (one Azure resource group
+  with power state). The single model-chosen argument per tool
+  (region/zone/group name) is validated against a strict
+  lowercase-alphanumeric-and-dash pattern before any CLI runs, so
+  flag-value injection is impossible; read-only verbs only; 30s timeout
+  like the other cloud tools.
+- **Human-approval gate (Phase 14)**: the scaffolding behind the README's
+  long-standing promise that any future mutating capability arrives only
+  behind an explicit gate. `Tool` gains a `mutating` flag (default
+  False); `execute_tool()` routes every mutating call through
+  `tools/approval.py` before its executor runs — the REPL asks the human
+  at the terminal (y/N prompt showing the exact action), one-shot mode
+  and non-interactive pipes auto-deny (default-deny is the point), one
+  approval covers identical (tool, action) pairs for the session, and a
+  different action re-asks. Every decision lands in a session audit
+  (`/approvals` command; `/approvals reset` forgets session approvals)
+  plus a best-effort JSONL trail next to the investigation store.
+  Denial is a plain tool error — the conversation loop stays alive. No
+  mutating tool ships yet; none can now bypass the gate.
+- Tests: `test_phase13.py` (10 — argv shapes, required args, injection
+  refusal without invoking the CLI, registry) and `test_phase14.py` (13 —
+  default-deny, y/n flow, session memory, reset, audit ring, read-only
+  bypass proof). Suite: 211 → 234, green.
+
+### Changed
+- README: tool table rows, architecture table, command table
+  (`/approvals`), limitations (cloud-resources scope, gate armed),
+  roadmap Phases 13/14, tool count 58 → 61, tests badge. Docs PDF roadmap
+  and limitations updated.
+
 ## [0.1.5] — 2026-09-27
 
 ### Added
