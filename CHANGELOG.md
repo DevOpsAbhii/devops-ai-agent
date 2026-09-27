@@ -6,6 +6,54 @@ versions follow [SemVer](https://semver.org/). Each version is published
 automatically when its `vX.Y.Z` tag is pushed (see
 `.github/workflows/release.yml`): PyPI + a multi-arch Docker image.
 
+## [0.1.5] — 2026-09-27
+
+### Added
+- **Conversation persistence (Phase 11)**: the chat itself now survives CLI
+  exits. Every exchange is auto-saved to
+  `~/.devops-ai-agent/conversations/` (`AGENT_CHAT_DIR` overrides) — one
+  JSON file per conversation, atomic in-place writes, linked to the
+  investigation file that was active while it was written. At startup
+  (REPL and one-shot `--resume`) the newest open conversation replays into
+  the model's context and its linked investigation reloads — the user
+  continues where they left off instead of re-explaining the problem.
+  History prunes at user-turn boundaries (system prompt + newest 40
+  turns), so a tool exchange is never split and the replayed token load
+  stays bounded. New commands: `/conversations` (list saved chats) and
+  `/newchat` (clear history and close the copy; an active investigation is
+  untouched). With no open conversation, restore falls back to the Phase 7
+  behavior (newest in-progress investigation only). Best-effort like
+  Phase 7: an unwritable directory degrades to a note, never an error.
+- **REPL streaming (Phase 12)**: the agent's answer appears in the
+  terminal as the model writes it instead of after the full response.
+  `agent.ask(..., stream=True)` streams the model call; streamed text
+  deltas print live and streamed tool-call fragments reassemble (by
+  index) into the same message shape the loop already reads — tool use,
+  history, persistence, and one-shot mode are byte-for-byte unchanged.
+  One-shot mode stays buffered for clean pipeline stdout. Retries cover
+  the connect/auth phase; a mid-stream drop surfaces as an error (a
+  partially streamed answer cannot be replayed cleanly).
+- **Release guard**: the release workflow's test job now verifies the
+  pushed tag matches pyproject.toml's version before running anything —
+  a mismatched tag fails fast with a clear error and publishes nothing.
+- Tests: `test_phase11.py` (11 — store round-trip, closing, pruning,
+  linked-investigation restore, `/conversations`, `/newchat`, one-shot
+  `--resume`) and `test_phase12.py` (8 — text/tool-fragment reassembly,
+  interleaved parallel calls, keep-alive chunks, stream-flag plumbing).
+  Suite: 181 → 211, green.
+
+### Changed
+- README: Phases 11/12 sections, command table, env vars, limitations
+  updated; roadmap "Later" list shrinks (streaming and conversation
+  persistence are done). INTEGRATION.md: `--resume`, `AGENT_CHAT_DIR`,
+  slash-command rows. Docs PDF roadmap and limitations updated.
+
+## [0.1.4] — 2026-09-27
+
+### Changed
+- Documentation only: the CHANGELOG gained this 0.1.3 entry. No code
+  changes.
+
 ## [0.1.3] — 2026-09-27
 
 ### Changed
