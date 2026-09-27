@@ -44,6 +44,10 @@ need one. The repository is git-tracked.
 Every phase still built from scratch — no LangChain, LangGraph,
 AutoGen, CrewAI, or MCP.
 
+> **New here?** The [Install & run guide (PDF)](DevOps_User_Guide.pdf) walks
+> you from zero to investigating — three install routes, credentials
+> (or none at all), model choice, and every command.
+
 > **Want to use this in your own project?** See [INTEGRATION.md](INTEGRATION.md)
 > for the three integration levels: drive it as a CLI from cron/CI (exit
 > codes + `--json`), embed it as a Python library, or extend it with your

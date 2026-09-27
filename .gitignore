@@ -17,6 +17,8 @@ __pycache__/
 # Generated documentation PDF
 DevOps_AI_Agent_Documentation.pdf
 DevOps_Release_Guide.pdf
+# DevOps_User_Guide.pdf is committed on purpose — it is the user-facing
+# quickstart; regenerate with docs/generate_user_guide.py.
 
 # Build artifacts (produced by `python -m build`, published by CI)
 dist/
