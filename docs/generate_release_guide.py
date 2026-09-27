@@ -182,8 +182,9 @@ story += [
     ]),
     P("The version it publishes comes from one place: the version = field "
       "in pyproject.toml. The tag name and the pyproject version must "
-      "match (v0.1.3 ↔ 0.1.3) — CI does not check this for you, so it is "
-      "step 5 below."),
+      "match (v0.1.3 ↔ 0.1.3) — the workflow's test job verifies this "
+      "before anything runs (see section 5), so a mismatched tag fails "
+      "fast and publishes nothing."),
     PageBreak(),
 ]
 
@@ -352,6 +353,13 @@ story += [
 story += [
     H1("5. When something goes wrong"),
     table(["Symptom", "Cause", "Fix"], [
+        ["Release run red on the test job: “Tag vX.Y.Z does not match "
+         "pyproject.toml version”",
+         "The tag name and pyproject's version = disagree (the workflow "
+         "checks this before the suite runs)",
+         "Fix one of the two, delete the tag: "
+         "git push origin :refs/tags/vX.Y.Z && git tag -d vX.Y.Z, then "
+         "commit/bump/tag the correct version"],
         ["PyPI job red: “file already exists” / version conflict",
          "The version was already published (PyPI is immutable — a "
          "version can never be re-uploaded, even to fix content)",
