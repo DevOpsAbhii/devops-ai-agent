@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "devopsiq"
-version = "0.1.4"
+version = "0.1.5"
 description = "A from-scratch, read-only AI agent that investigates real DevOps problems — Kubernetes, Docker, Helm, Argo CD, Istio, Terraform, GitHub Actions, cloud, New Relic and more."
 readme = "README.md"
 license = "MIT"
