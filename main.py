@@ -46,6 +46,7 @@ from openai import (
 
 from agent.agent import DevOpsAgent
 from agent.config import config_path, save_user_config
+from tools import approval
 
 EXIT_WORDS = {"exit", "quit"}
 
@@ -64,6 +65,7 @@ COMMAND_ALIASES = {
     "/conversations": "/conversations",
     "/newchat": "/newchat",
     "/new": "/newchat",
+    "/approvals": "/approvals",
 }
 
 
@@ -95,11 +97,18 @@ def handle_command(text: str, agent: DevOpsAgent) -> str | None:
         return agent.list_conversations() or "(no saved conversations yet)"
     if canonical == "/newchat":
         return agent.new_chat()
+    if canonical == "/approvals":
+        if rest.strip().lower() == "reset":
+            n = approval.reset_approvals()
+            return f"Forgot {n} session approval(s)."
+        return (approval.audit_text()
+                or "(no approval requests yet — every mutating tool call "
+                   "would be confirmed here)")
     if canonical == "/model":
         return handle_model_command(rest, agent)
     return (f"unknown command: {cmd}. Try /investigate <problem>, "
             "/investigation, /investigations, /report, /endinvestigation, "
-            "/conversations, /newchat, /model")
+            "/conversations, /newchat, /approvals, /model")
 
 
 def handle_model_command(rest: str, agent: DevOpsAgent) -> str:
@@ -295,6 +304,20 @@ def main() -> int:
         print(f"[setup] {exc}", file=sys.stderr)
         return 1
 
+    # Phase 14: the REPL can ask the human at the terminal to approve a
+    # mutating tool call (none exist yet — this is the gate they will use).
+    def _ask_human(prompt: str) -> bool:
+        print(f"\n[approval needed] {prompt}")
+        try:
+            answer = input("Approve? [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return False
+        return answer in ("y", "yes")
+
+    approval.set_asker(_ask_human)
+    print("[setup] Mutating-action approval gate: armed (default-deny; "
+          "/approvals to view).")
+
     if agent.client is None:
         # Model-less mode: the REPL still starts — record commands (slash
         # commands) work, only questions to the model are unavailable.
@@ -311,7 +334,8 @@ def main() -> int:
     print(f"Chats:   {agent.chat_dir or '(conversation persistence off)'}")
     print(f"Tools:   {tool_names}")
     print("Commands: /investigate <problem>, /investigation, /investigations, "
-          "/report, /endinvestigation, /conversations, /newchat, /model [<name>]")
+          "/report, /endinvestigation, /conversations, /newchat, /approvals, "
+          "/model [<name>]")
     print("One-shot: python main.py [--json] [--resume] [--out report.json] "
           "[--store-dir DIR] [--model NAME] \"<problem>\"")
     print("Type 'exit' to quit.")

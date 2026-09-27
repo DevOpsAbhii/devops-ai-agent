@@ -93,12 +93,18 @@ class Tool:
         executor: local callable(args: dict) -> str. It receives the *parsed*
             JSON arguments and returns the text fed back to the model as
             evidence. Must be read-only and must never fabricate output.
+        mutating: False (default) for the read-only surface every tool
+            shipped so far. True marks a tool that can change something —
+            execute_tool() then routes every call through the human-approval
+            gate (tools/approval.py), so a mutating tool cannot be added
+            that bypasses approval.
     """
 
     name: str
     description: str
     parameters: dict
     executor: Callable[[dict], str]
+    mutating: bool = False
 
     def schema(self) -> dict:
         """Render this tool in the OpenAI-compatible `tools` request format."""
