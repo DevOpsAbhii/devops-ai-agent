@@ -166,7 +166,7 @@ story += [
     H1("1. What a release is in this project"),
     P("A release is one git tag. Nothing else — no buttons, no manual "
       "uploads. Pushing a tag named v* triggers .github/workflows/"
-      "release.yml, which runs three GitHub Actions jobs in order:"),
+      "release.yml, which runs four GitHub Actions jobs in order:"),
     *bullets([
         "test — checks out the tag, installs requirements, runs the full "
         "offline suite (python -m unittest discover -s tests). Nothing "
@@ -177,10 +177,12 @@ story += [
         "docker — builds the image for linux/amd64 and linux/arm64 with "
         "buildx and pushes ghcr.io/devopsabhii/devops-ai-agent:<version> "
         "and :latest (GITHUB_TOKEN; no setup needed).",
+        "github-release — creates the GitHub Release page with "
+        "auto-generated notes and marks it latest.",
     ]),
     P("The version it publishes comes from one place: the version = field "
       "in pyproject.toml. The tag name and the pyproject version must "
-      "match (v0.1.1 ↔ 0.1.1) — CI does not check this for you, so it is "
+      "match (v0.1.2 ↔ 0.1.2) — CI does not check this for you, so it is "
       "step 5 below."),
     PageBreak(),
 ]
@@ -202,15 +204,15 @@ gh run watch <run-id> --exit-status
 # job-by-job detail (all three must be success)
 gh run view <run-id> --json status,conclusion,jobs \\
   --jq '{conclusion, jobs: [.jobs[] | {name, conclusion}]}'
-""", cap="Expect: conclusion success, jobs test / pypi / docker all success."),
+""", cap="Expect: conclusion success, jobs test / pypi / docker / github-release all success."),
     H2("2.2 PyPI — is the new version published?"),
     *code_text("""
 # the authoritative machine-readable check:
 curl -s https://pypi.org/pypi/devopsiq/json | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
-print('latest:', d['info']['version'])          # → 0.1.1
-print('all:   ', sorted(d['releases'].keys()))  # → ['0.1.0', '0.1.1']
+print('latest:', d['info']['version'])          # → 0.1.2
+print('all:   ', sorted(d['releases'].keys()))  # → ['0.1.0', '0.1.1', '0.1.2']
 "
 
 # or just open:  https://pypi.org/project/devopsiq/
@@ -254,7 +256,7 @@ docker pull ghcr.io/devopsabhii/devops-ai-agent:X.Y.Z
 story += [
     H1("3. Change something and release it — step by step"),
     P("The whole loop, from edit to verified release. Version numbers below "
-      "assume the current release is 0.1.1 and the next one is 0.1.2 — "
+      "assume the current release is 0.1.2 and the next one is 0.1.3 — "
       "bump the patch digit for fixes, the minor digit for features."),
     H2("Step 1 — make your change"),
     *code_text("""
@@ -266,7 +268,7 @@ git diff            # review the actual edits
     H2("Step 2 — run the tests (the same gate CI will run)"),
     *code_text("""
 .venv/bin/python -m unittest discover -s tests
-#   → "Ran 169 tests ... OK"   (1 skip is expected when running as root)
+#   → "Ran 181 tests ... OK"   (1 skip is expected when running as root)
 
 # if you added behavior, add tests next to the existing pattern first:
 #   tests/test_phaseN.py / tests/test_automation.py — offline, stub CLIs
@@ -279,24 +281,24 @@ git push
 """, cap="Write commit messages for future-you: what changed and why."),
     H2("Step 4 — bump the version in pyproject.toml"),
     *code_text("""
-sed -i 's/^version = "0.1.1"/version = "0.1.2"/' pyproject.toml
-grep -n '^version' pyproject.toml     # confirm: version = "0.1.2"
+sed -i 's/^version = "0.1.2"/version = "0.1.3"/' pyproject.toml
+grep -n '^version' pyproject.toml     # confirm: version = "0.1.3"
 
 git add pyproject.toml
-git commit -m "Bump version to 0.1.2 for release"
+git commit -m "Bump version to 0.1.3 for release"
 git push
-""", cap="Tag name and this version must agree: tag v0.1.2 ↔ version 0.1.2."),
+""", cap="Tag name and this version must agree: tag v0.1.3 ↔ version 0.1.3."),
     H2("Step 5 — tag and push the tag (this triggers the release)"),
     *code_text("""
-git tag v0.1.2
-git push origin v0.1.2
+git tag v0.1.3
+git push origin v0.1.3
 """, cap="Pushing the tag is the release button. Nothing publishes without it."),
     H2("Step 6 — watch the run, then verify (section 2)"),
     *code_text("""
 gh run list --workflow=release.yml --limit 1     # note the run id
 gh run watch <run-id> --exit-status              # waits until done
 
-# then, when all three jobs are success:
+# then, when all four jobs are success:
 #   2.2 PyPI JSON shows the new version   (allow 2–5 min CDN lag)
 #   2.3 fresh venv smoke test
 #   2.4 GHCR manifest shows the new tag + amd64/arm64
@@ -386,13 +388,13 @@ cd ~/devops-ai-agent
 # ...edit files...
 .venv/bin/python -m unittest discover -s tests        # green first
 git add <files> && git commit -m "the change" && git push
-sed -i 's/^version = "0.1.1"/version = "0.1.2"/' pyproject.toml
-git add pyproject.toml && git commit -m "Bump version to 0.1.2" && git push
-git tag v0.1.2 && git push origin v0.1.2              # ← the release button
+sed -i 's/^version = "0.1.2"/version = "0.1.3"/' pyproject.toml
+git add pyproject.toml && git commit -m "Bump version to 0.1.3" && git push
+git tag v0.1.3 && git push origin v0.1.3              # ← the release button
 gh run watch $(gh run list --workflow=release.yml --limit 1 -q '.[0].databaseId') \\
   --exit-status
-curl -s https://pypi.org/pypi/devopsiq/json | grep -o '"0.1.2"'
-docker pull ghcr.io/devopsabhii/devops-ai-agent:0.1.2
+curl -s https://pypi.org/pypi/devopsiq/json | grep -o '"0.1.3"'
+docker pull ghcr.io/devopsabhii/devops-ai-agent:0.1.3
 """, cap="Everything above, condensed to eight lines."),
     Spacer(1, 0.4 * cm),
     Paragraph("Release & update playbook — generated from the repository on "

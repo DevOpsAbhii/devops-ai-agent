@@ -74,6 +74,9 @@ workstation. The tools execute locally.
 
 # continue a prior run (picks up the newest in-progress record)
 .venv/bin/python main.py --resume --json --out update.json "any progress?"
+
+# per-run model override (any OpenRouter model)
+.venv/bin/python main.py --model openai/gpt-5.2 --json "..."
 ```
 
 | Property | Behavior |
@@ -83,7 +86,9 @@ workstation. The tools execute locally.
 | `--out PATH` | Writes that same JSON to an exact file (for pipelines that want a known location); stdout stays the human-readable report |
 | `--store-dir DIR` | Where investigation records auto-save for this run (env: `AGENT_STORE_DIR`; default `~/.devops-ai-agent/investigations/`) |
 | `--resume` | Load the newest in-progress record from the store before asking |
-| Slash commands | Work one-shot too: `python main.py /report` |
+| `--model NAME` | Override the model for this run (highest model precedence; then `~/.devops-ai-agent/config.json`, then `OPENROUTER_MODEL`, then the built-in default) |
+| Slash commands | Work one-shot too: `python main.py /report`, `/investigations`, `/model`, … |
+| Retries | Transient model-call failures (timeouts, connection errors, 429s honoring `Retry-After`, 5xx) retry up to 3× with exponential backoff 2s→4s→8s + jitter before surfacing; client 4xx (a rejected key, most notably) fail immediately. Budget for ~15s of retry delay in your subprocess `timeout=` |
 
 The JSON shape is `render_report_json()` in `agent/investigation.py` —
 deterministic, no model text is trusted, so your pipeline can act on
@@ -315,6 +320,7 @@ environment config only, pinned curl argv, percent-encoded queries.
 | --- | --- | --- |
 | `OPENROUTER_API_KEY` | the model itself | required; `.env` or shell (shell wins) |
 | `OPENROUTER_MODEL` | model choice | default `z-ai/glm-5.3`; any OpenRouter model, one line |
+| `AGENT_CONFIG_FILE` | model-preference file | override for `~/.devops-ai-agent/config.json` (the `/model` command's save target); tests use tmp paths |
 | `AGENT_STORE_DIR` | record persistence | default `~/.devops-ai-agent/investigations/` |
 | `PROMETHEUS_URL` | `prom_query` | http(s) endpoint |
 | `LOKI_URL` | `loki_query` | http(s) endpoint |
