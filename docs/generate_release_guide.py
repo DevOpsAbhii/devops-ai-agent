@@ -182,7 +182,7 @@ story += [
     ]),
     P("The version it publishes comes from one place: the version = field "
       "in pyproject.toml. The tag name and the pyproject version must "
-      "match (v0.1.2 ↔ 0.1.2) — CI does not check this for you, so it is "
+      "match (v0.1.3 ↔ 0.1.3) — CI does not check this for you, so it is "
       "step 5 below."),
     PageBreak(),
 ]
@@ -201,7 +201,7 @@ gh run list --workflow=release.yml --limit 3
 # live-watch the run for the tag you just pushed
 gh run watch <run-id> --exit-status
 
-# job-by-job detail (all three must be success)
+# job-by-job detail (all four must be success)
 gh run view <run-id> --json status,conclusion,jobs \\
   --jq '{conclusion, jobs: [.jobs[] | {name, conclusion}]}'
 """, cap="Expect: conclusion success, jobs test / pypi / docker / github-release all success."),
@@ -211,8 +211,8 @@ gh run view <run-id> --json status,conclusion,jobs \\
 curl -s https://pypi.org/pypi/devopsiq/json | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
-print('latest:', d['info']['version'])          # → 0.1.2
-print('all:   ', sorted(d['releases'].keys()))  # → ['0.1.0', '0.1.1', '0.1.2']
+print('latest:', d['info']['version'])          # → 0.1.3
+print('all:   ', sorted(d['releases'].keys()))  # → ['0.1.0', '0.1.1', '0.1.2', '0.1.3']
 "
 
 # or just open:  https://pypi.org/project/devopsiq/
@@ -256,7 +256,7 @@ docker pull ghcr.io/devopsabhii/devops-ai-agent:X.Y.Z
 story += [
     H1("3. Change something and release it — step by step"),
     P("The whole loop, from edit to verified release. Version numbers below "
-      "assume the current release is 0.1.2 and the next one is 0.1.3 — "
+      "assume the current release is 0.1.3 and the next one is 0.1.4 — "
       "bump the patch digit for fixes, the minor digit for features."),
     H2("Step 1 — make your change"),
     *code_text("""
@@ -281,17 +281,17 @@ git push
 """, cap="Write commit messages for future-you: what changed and why."),
     H2("Step 4 — bump the version in pyproject.toml"),
     *code_text("""
-sed -i 's/^version = "0.1.2"/version = "0.1.3"/' pyproject.toml
-grep -n '^version' pyproject.toml     # confirm: version = "0.1.3"
+sed -i 's/^version = "0.1.3"/version = "0.1.4"/' pyproject.toml
+grep -n '^version' pyproject.toml     # confirm: version = "0.1.4"
 
 git add pyproject.toml
-git commit -m "Bump version to 0.1.3 for release"
+git commit -m "Bump version to 0.1.4 for release"
 git push
-""", cap="Tag name and this version must agree: tag v0.1.3 ↔ version 0.1.3."),
+""", cap="Tag name and this version must agree: tag v0.1.4 ↔ version 0.1.4."),
     H2("Step 5 — tag and push the tag (this triggers the release)"),
     *code_text("""
-git tag v0.1.3
-git push origin v0.1.3
+git tag v0.1.4
+git push origin v0.1.4
 """, cap="Pushing the tag is the release button. Nothing publishes without it."),
     H2("Step 6 — watch the run, then verify (section 2)"),
     *code_text("""
@@ -388,13 +388,13 @@ cd ~/devops-ai-agent
 # ...edit files...
 .venv/bin/python -m unittest discover -s tests        # green first
 git add <files> && git commit -m "the change" && git push
-sed -i 's/^version = "0.1.2"/version = "0.1.3"/' pyproject.toml
-git add pyproject.toml && git commit -m "Bump version to 0.1.3" && git push
-git tag v0.1.3 && git push origin v0.1.3              # ← the release button
+sed -i 's/^version = "0.1.3"/version = "0.1.4"/' pyproject.toml
+git add pyproject.toml && git commit -m "Bump version to 0.1.4" && git push
+git tag v0.1.4 && git push origin v0.1.4              # ← the release button
 gh run watch $(gh run list --workflow=release.yml --limit 1 -q '.[0].databaseId') \\
   --exit-status
-curl -s https://pypi.org/pypi/devopsiq/json | grep -o '"0.1.3"'
-docker pull ghcr.io/devopsabhii/devops-ai-agent:0.1.3
+curl -s https://pypi.org/pypi/devopsiq/json | grep -o '"0.1.4"'
+docker pull ghcr.io/devopsabhii/devops-ai-agent:0.1.4
 """, cap="Everything above, condensed to eight lines."),
     Spacer(1, 0.4 * cm),
     Paragraph("Release & update playbook — generated from the repository on "
