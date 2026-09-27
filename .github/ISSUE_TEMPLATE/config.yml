@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Install & run guide
+    url: https://github.com/DevOpsAbhii/devops-ai-agent/blob/main/DevOps_User_Guide.pdf
+    about: The user-facing quickstart — three install routes, credentials, every command.

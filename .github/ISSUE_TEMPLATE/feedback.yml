@@ -1,0 +1,58 @@
+name: Testing feedback
+description: How did devopsiq work for you? The good and the broken — rough answers are the most useful.
+title: "[feedback] "
+labels: [feedback]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing **devopsiq**! Rough answers are the most useful —
+        skip any question that doesn't apply.
+  - type: dropdown
+    id: install-route
+    attributes:
+      label: How did you install it?
+      options:
+        - pipx install devopsiq
+        - pip install devopsiq
+        - Docker image (ghcr.io/devopsabhii/devops-ai-agent)
+        - From source (git clone)
+    validations:
+      required: true
+  - type: dropdown
+    id: api-key
+    attributes:
+      label: Did you have an OpenRouter API key?
+      options:
+        - "Yes"
+        - "No — used model-less mode (record commands + tools)"
+        - "No — pointed it at a local Ollama instead"
+  - type: textarea
+    id: tried
+    attributes:
+      label: What did you try?
+      description: Commands you ran, questions you asked. Paste them roughly — no need to be tidy.
+  - type: textarea
+    id: worked
+    attributes:
+      label: What worked well?
+  - type: textarea
+    id: broken
+    attributes:
+      label: What broke or confused you?
+      description: Error messages are gold — paste them exactly as they appeared.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Your environment
+      description: OS, Python version, CLIs you had installed (kubectl, docker, gh, …). Include only what you're comfortable sharing.
+  - type: dropdown
+    id: recommend
+    attributes:
+      label: Would you use this for real?
+      options:
+        - "Yes"
+        - "Maybe, with changes"
+        - "No"
